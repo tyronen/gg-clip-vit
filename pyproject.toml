@@ -9,6 +9,7 @@ dependencies = [
     # DO NOT PUT torch or anything depending on numpy here!
     # That would overwrite Computa's versions
     "tqdm>=4.67.1",
+    "transformers>=4.53.0",
     "wandb>=0.20.1",
 ]
 
@@ -23,5 +24,4 @@ local = [
     "streamlit>=1.46.0",
     "torch>=2.6.0",
     "torchvision>=0.22.0",
-    "transformers>=4.53.0",
 ]
