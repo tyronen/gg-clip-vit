@@ -9,7 +9,7 @@ import utils
 from torch.utils.data import DataLoader
 import numpy as np
 import models
-from torchvision.transforms import v2
+import kagglehub
 
 hyperparameters = {
     "model_dim": 512,
@@ -27,11 +27,6 @@ hyperparameters = {
 parser = argparse.ArgumentParser(description="Train simple model")
 parser.add_argument("--entity", help="W and B entity", default="mlx-institute")
 parser.add_argument("--project", help="W and B project", default="custom-decoder")
-parser.add_argument(
-    "--flickr_dir",
-    help="Location of the Flickr30 dataset",
-    default="/Users/tyrone/.cache/kagglehub/datasets/adityajn105/flickr30k/versions/1",
-)
 args = parser.parse_args()
 
 
@@ -156,9 +151,11 @@ def main():
         config=config,
     )
 
-    train_dataset = models.Flickr30kDataset(args.flickr_dir, split="train")
-    validation_dataset = models.Flickr30kDataset(args.flickr_dir, split="val")
-    test_dataset = models.Flickr30kDataset(args.flickr_dir, split="test")
+    imagepath = kagglehub.dataset_download("adityajn105/flickr30k")
+
+    train_dataset = models.Flickr30kDataset(imagepath, split="train")
+    validation_dataset = models.Flickr30kDataset(imagepath, split="val")
+    test_dataset = models.Flickr30kDataset(imagepath, split="test")
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )

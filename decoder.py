@@ -4,11 +4,17 @@ import kagglehub
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset
 
+
 def main():
     # export HF_HUB_ENABLE_HF_TRANSFER=1 in shell before running this first time
-    print("transfer?", os.getenv("HF_HUB_ENABLE_HF_TRANSFER"),
-          "hub-ver", im.version("huggingface_hub"),
-          "hf_transfer", im.version("hf_transfer"))
+    print(
+        "transfer?",
+        os.getenv("HF_HUB_ENABLE_HF_TRANSFER"),
+        "hub-ver",
+        im.version("huggingface_hub"),
+        "hf_transfer",
+        im.version("hf_transfer"),
+    )
     c = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     v = transformers.ViTModel.from_pretrained("google/vit-base-patch16-224-in21k")
     ds = load_dataset("nlphuji/flickr30k", num_proc=8)

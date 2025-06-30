@@ -2,7 +2,6 @@
 # run like `source setup.sh` on any remote to ensure active shell is set up with venv
 
 # ensure we have all the utils we need
-apt-get update
 apt-get install -y vim rsync git nvtop htop tmux curl ca-certificates git-lfs lsof nano
 apt-get upgrade -y
 
