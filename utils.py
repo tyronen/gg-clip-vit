@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import torch
 from torch.cuda.amp import autocast, GradScaler
 
+MODEL_FILE = "data/models.pth"
 
 def setup_logging():
     logging.basicConfig(
