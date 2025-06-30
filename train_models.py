@@ -9,14 +9,17 @@ import utils
 from torch.utils.data import DataLoader
 import numpy as np
 import models
-
+from torchvision.transforms import v2
 
 hyperparameters = {
     "model_dim": 512,
+    "ffn_dim": 2048,
+    "num_heads": 8,
+    "num_decoders": 6,
     "learning_rate": 1e-4,
     "batch_size": 256,
     "epochs": 50,
-    "dropout_rate": 0.1,
+    "dropout": 0.1,
     "patience": 5,
     "temperature": 0.05,
 }
@@ -27,9 +30,14 @@ parser.add_argument("--project", help="W and B project", default="custom-decoder
 parser.add_argument(
     "--flickr_dir",
     help="Location of the Flickr30 dataset",
-    default="~/.cache/kagglehub/datasets/adityajn105/flickr30k/versions/1",
+    default="/Users/tyrone/.cache/kagglehub/datasets/adityajn105/flickr30k/versions/1",
 )
 args = parser.parse_args()
+
+
+def collate_fn(batch):
+    images, texts = zip(*batch)
+    return {"images": list(images), "texts": list(texts)}
 
 
 class CustomDataLoader(DataLoader):
@@ -43,6 +51,7 @@ class CustomDataLoader(DataLoader):
             pin_memory=(device.type == "cuda"),
             num_workers=num_workers,
             persistent_workers=(num_workers > 0),
+            collate_fn=collate_fn,
         )
 
 
@@ -120,7 +129,7 @@ def validate_model(run, model, validation_dataloader, epoch, device):
 # Shared forward pass + in‑batch contrastive loss
 # ------------------------------------------------------------------ #
 def _contrastive_forward(batch, model, temperature):
-    image_embeds, text_embeds = model(batch)
+    image_embeds, text_embeds = model(batch["images"], batch["texts"])
 
     logits = torch.matmul(image_embeds, text_embeds.T) / temperature  # [B,2B]
     labels = torch.arange(len(image_embeds), device=image_embeds.device)

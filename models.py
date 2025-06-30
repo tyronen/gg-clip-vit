@@ -1,12 +1,12 @@
 import math
+
 import torch
 import torch.nn as nn
 import os
 import pandas as pd
-from PIL.Image import Image
+from PIL import Image
 from torch.utils.data import Dataset
-from transformers import CLIPModel, CLIPProcessor, ViTModel, ViTImageProcessor
-
+from transformers import AutoModel, AutoProcessor
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
@@ -15,14 +15,14 @@ import numpy as np
 
 
 class Flickr30kDataset(Dataset):
-    def __init__(self, data_dir, split='train', transform=None):
+    def __init__(self, data_dir, split="train", transform=None):
         self.data_dir = data_dir
         self.transform = transform
 
         self.captions = pd.read_csv(os.path.join(data_dir, "captions.txt"))
 
         # Get unique images
-        unique_images = self.captions['image'].unique()
+        unique_images = self.captions["image"].unique()
 
         # Split images, not captions
         np.random.seed(42)  # reproducible splits
@@ -32,15 +32,15 @@ class Flickr30kDataset(Dataset):
         train_end = int(0.8 * n_images)
         val_end = int(0.9 * n_images)
 
-        if split == 'train':
+        if split == "train":
             split_images = unique_images[:train_end]
-        elif split == 'val':
+        elif split == "val":
             split_images = unique_images[train_end:val_end]
-        elif split == 'test':
+        elif split == "test":
             split_images = unique_images[val_end:]
 
         # Filter captions for this split
-        self.captions = self.captions[self.captions['image'].isin(split_images)]
+        self.captions = self.captions[self.captions["image"].isin(split_images)]
         self.img_dir = os.path.join(data_dir, "Images")
 
     def __len__(self):
@@ -49,16 +49,17 @@ class Flickr30kDataset(Dataset):
     def __getitem__(self, idx):
         row = self.captions.iloc[idx]
 
-        img_filename = row['image']  # Perfect - matches the column name
+        img_filename = row["image"]  # Perfect - matches the column name
         img_path = os.path.join(self.img_dir, img_filename)
 
-        image = Image.open(img_path).convert('RGB')
+        image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
 
-        caption = row['caption']  # Perfect - matches the column name
+        caption = row["caption"]  # Perfect - matches the column name
 
         return image, caption
+
 
 def attention(k_dim, q, k, v, mask_tensor):
     kt = k.transpose(-2, -1)
@@ -72,7 +73,9 @@ def attention(k_dim, q, k, v, mask_tensor):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, model_dim: int, num_heads: int, mask: bool, dropout: float = 0.1):
+    def __init__(
+        self, model_dim: int, num_heads: int, mask: bool, dropout: float = 0.1
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.model_dim = model_dim
@@ -95,13 +98,14 @@ class SelfAttention(nn.Module):
 
         mask_tensor = None
         if self.mask:
-            mask_tensor = torch.triu(torch.ones(L, L, device=x.device), diagonal=1).bool()
+            mask_tensor = torch.triu(
+                torch.ones(L, L, device=x.device), diagonal=1
+            ).bool()
 
         attended = attention(self.k_dim, qh, kh, vh, mask_tensor=mask_tensor)
         concatted = attended.transpose(1, 2).reshape(B, L, self.model_dim)
         concatted = self.dropout(concatted)
         return self.endmulti(concatted)
-
 
 
 class FeedForward(nn.Module):
@@ -121,7 +125,9 @@ class FeedForward(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, model_dim: int, ffn_dim: int, num_heads: int, dropout: float):
         super().__init__()
-        self.masked_self_mha = SelfAttention(model_dim=model_dim, num_heads=num_heads, mask=True)
+        self.masked_self_mha = SelfAttention(
+            model_dim=model_dim, num_heads=num_heads, mask=True
+        )
         self.norm1 = nn.LayerNorm(model_dim)
         self.ffn = FeedForward(model_dim=model_dim, ffn_dim=ffn_dim)
         self.norm2 = nn.LayerNorm(model_dim)
@@ -132,6 +138,7 @@ class Decoder(nn.Module):
         addnormed_text = self.norm1(data + self.dropout(stage1))
         ffned = self.ffn(addnormed_text)
         return self.norm2(addnormed_text + self.dropout(ffned))
+
 
 class CombinedTransformer(nn.Module):
     def __init__(
@@ -144,10 +151,10 @@ class CombinedTransformer(nn.Module):
     ):
         super().__init__()
         # Load pre-trained models
-        self.clip_processor = CLIPProcessor.from_pretrained(CLIP)
-        self.clip_model = CLIPModel.from_pretrained(CLIP)
-        self.vit_processor = ViTImageProcessor.from_pretrained(VIT)
-        self.vit_model = ViTModel.from_pretrained(VIT)
+        self.clip_processor = AutoProcessor.from_pretrained(CLIP)
+        self.clip_model = AutoModel.from_pretrained(CLIP)
+        self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
+        self.vit_model = AutoModel.from_pretrained(VIT)
 
         # Freeze the pre-trained weights
         for param in self.clip_model.parameters():
@@ -166,12 +173,16 @@ class CombinedTransformer(nn.Module):
                 dropout=dropout,
             )
 
-        self.decoder_series = nn.ModuleList([make_decoder() for _ in range(num_decoders)])
+        self.decoder_series = nn.ModuleList(
+            [make_decoder() for _ in range(num_decoders)]
+        )
         self.linear = nn.Linear(model_dim, model_dim)
 
     def encode_text(self, text):
         """Extract CLIP text features"""
-        inputs = self.clip_processor(text=text, return_tensors="pt", padding=True, truncation=True)
+        inputs = self.clip_processor(
+            text=text, return_tensors="pt", padding=True, truncation=True
+        )
         text_features = self.clip_model.get_text_features(**inputs)
         return text_features  # Shape: [batch_size, 512]
 
@@ -186,6 +197,6 @@ class CombinedTransformer(nn.Module):
         encoded_images = self.encode_image_vit(images)
         encoded_images = encoded_images.mean(dim=1)
 
-        embed_texts = self.text_project(encoded_texts)
+        embed_texts = self.text_projection(encoded_texts)
         embed_images = self.image_projection(encoded_images)
         return embed_texts, embed_images
