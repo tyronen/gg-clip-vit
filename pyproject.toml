@@ -3,7 +3,7 @@ name = "gg-clip-vit"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = "==3.10.2"
+requires-python = ">=3.10"
 dependencies = [
     "black>=25.1.0",
     # DO NOT PUT torch or anything depending on numpy here!
@@ -19,7 +19,6 @@ local = [
     "kagglehub>=0.3.12",
     "matplotlib>=3.10.3",
     "notebook>=7.4.3",
-    "pandas>=2.3.0",
     "pillow>=11.2.1",
     "streamlit>=1.46.0",
     "torch>=2.6.0",

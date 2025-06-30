@@ -24,7 +24,7 @@ if [[ -n "$SSH_CONNECTION" && -d /workspace ]]; then
   set +a
 fi
 
-uv venv --system-site-packages
+uv venv --python /usr/bin/python3.10 --system-site-packages .venv
 
 # install python packages (using nightly index for latest torch if beast mode enabled)
 if [[ "$BEAST_MODE" == "1" ]]; then

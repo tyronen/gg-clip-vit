@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import os
-import pandas as pd
+import csv
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor
@@ -19,12 +19,19 @@ class Flickr30kDataset(Dataset):
         self.data_dir = data_dir
         self.transform = transform
 
-        self.captions = pd.read_csv(os.path.join(data_dir, "captions.txt"))
+        captions_path = os.path.join(data_dir, "captions.txt")
 
-        # Get unique images
-        unique_images = self.captions["image"].unique()
+        # Load the caption records without pandas
+        with open(captions_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(
+                f, delimiter=","
+            )  # assumes CSV with header "image,caption"
+            all_captions = [row for row in reader]
 
-        # Split images, not captions
+        # Collect unique image filenames
+        unique_images = list({row["image"] for row in all_captions})
+
+        # Split the images (not the individual caption rows) into train/val/test
         np.random.seed(42)  # reproducible splits
         np.random.shuffle(unique_images)
 
@@ -33,31 +40,30 @@ class Flickr30kDataset(Dataset):
         val_end = int(0.9 * n_images)
 
         if split == "train":
-            split_images = unique_images[:train_end]
+            split_images = set(unique_images[:train_end])
         elif split == "val":
-            split_images = unique_images[train_end:val_end]
-        elif split == "test":
-            split_images = unique_images[val_end:]
+            split_images = set(unique_images[train_end:val_end])
+        else:  # "test"
+            split_images = set(unique_images[val_end:])
 
-        # Filter captions for this split
-        self.captions = self.captions[self.captions["image"].isin(split_images)]
+        # Keep only caption rows whose image belongs to the chosen split
+        self.captions = [row for row in all_captions if row["image"] in split_images]
+
         self.img_dir = os.path.join(data_dir, "Images")
 
     def __len__(self):
         return len(self.captions)
 
     def __getitem__(self, idx):
-        row = self.captions.iloc[idx]
-
-        img_filename = row["image"]  # Perfect - matches the column name
+        row = self.captions[idx]
+        img_filename = row["image"]
         img_path = os.path.join(self.img_dir, img_filename)
 
         image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
 
-        caption = row["caption"]  # Perfect - matches the column name
-
+        caption = row["caption"]
         return image, caption
 
 
