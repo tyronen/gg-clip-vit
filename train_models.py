@@ -20,7 +20,7 @@ hyperparameters = {
     "dropout": 0.1,
     "patience": 3,
     "data_fraction": 0.1,
-    "label_smoothing": 0.05,
+    "label_smoothing": 0.1,
 }
 
 parser = argparse.ArgumentParser(description="Train simple model")

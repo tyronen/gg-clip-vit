@@ -52,7 +52,7 @@ def main():
     for filenames, images in tqdm(dataloader):
         inputs = processor(images=images, return_tensors="pt").to(device)
         with torch.no_grad():
-            outputs = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
+            outputs = model(**inputs).last_hidden_state[:, 0].cpu().numpy()
         for fname, vec in zip(filenames, outputs):
             features[fname] = vec
 
