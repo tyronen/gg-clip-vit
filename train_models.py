@@ -18,7 +18,9 @@ hyperparameters = {
     "learning_rate": 1e-4,
     "epochs": 50,
     "dropout": 0.1,
-    "patience": 5,
+    "patience": 3,
+    "data_fraction": 0.1,
+    "label_smoothing": 0.05,
 }
 
 parser = argparse.ArgumentParser(description="Train simple model")
@@ -82,7 +84,7 @@ def loss_fn(batch, model):
         logits.view(-1, vocab_size),
         labels.contiguous().view(-1),
         ignore_index=model.tokenizer.pad_token_id,
-        label_smoothing=0.1,
+        label_smoothing=hyperparameters["label_smoothing"],
     )
     return loss, logits, labels
 
@@ -110,9 +112,9 @@ def main():
         config=config,
     )
 
-    train_dataset = models.Flickr30kDataset(split="train")
-    validation_dataset = models.Flickr30kDataset(split="val")
-    test_dataset = models.Flickr30kDataset(split="test")
+    train_dataset = models.Flickr30kDataset(split="train", data_fraction=hyperparameters["data_fraction"])
+    validation_dataset = models.Flickr30kDataset(split="val", data_fraction=hyperparameters["data_fraction"])
+    test_dataset = models.Flickr30kDataset(split="test", data_fraction=hyperparameters["data_fraction"])
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )
@@ -131,7 +133,8 @@ def main():
         num_decoders=hyperparameters["num_decoders"],
         dropout=hyperparameters["dropout"],
     ).to(device)
-
+    wandb.watch(model, log="all", log_freq=100)
+    wandb.define_metric("val_loss", summary="min")
     params = [
         {
             "params": model.parameters(),
@@ -157,9 +160,6 @@ def main():
             optimizer.zero_grad()
             with maybe_autocast:
                 loss, logits, labels = loss_fn(batch, model)
-            if (i == 0):
-                free, total = torch.cuda.mem_get_info()       # bytes
-                logging.info(f"Free GB: {free/1e9:.2f} / {total/1e9:.2f}")
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)

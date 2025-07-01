@@ -24,7 +24,7 @@ import numpy as np
 
 
 class Flickr30kDataset(Dataset):
-    def __init__(self, split="train"):
+    def __init__(self, split="train", data_fraction=1.0):
         data_dir = kagglehub.dataset_download("adityajn105/flickr30k")
 
         captions_path = os.path.join(data_dir, "captions.txt")
@@ -43,10 +43,10 @@ class Flickr30kDataset(Dataset):
         np.random.seed(42)  # reproducible splits
         np.random.shuffle(unique_images)
 
-        n_images = len(unique_images)
+        n_images = data_fraction * len(unique_images)
         train_end = int(0.8 * n_images)
         val_end = int(0.9 * n_images)
-        test_end = n_images
+        test_end = int(1.0 * n_images)
 
         if split == "train":
             split_images = set(unique_images[:train_end])
