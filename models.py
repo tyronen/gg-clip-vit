@@ -158,9 +158,9 @@ class CombinedTransformer(nn.Module):
         super().__init__()
         # Load pre-trained models
         self.clip_processor = AutoProcessor.from_pretrained(CLIP)
-        self.clip_model = AutoModel.from_pretrained(CLIP)
+        self.clip_model = AutoModel.from_pretrained(CLIP, use_safetensors=True)
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
-        self.vit_model = AutoModel.from_pretrained(VIT)
+        self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
 
         # Freeze the pre-trained weights
         for param in self.clip_model.parameters():
