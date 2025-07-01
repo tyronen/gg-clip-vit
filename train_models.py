@@ -11,13 +11,13 @@ import models
 
 hyperparameters = {
     "batch_size": 192,
-    "model_dim": 384,
-    "ffn_dim": 1536,
+    "model_dim": 512,
+    "ffn_dim": 2048,
     "num_heads": 8,
     "num_decoders": 4,
     "learning_rate": 1e-4,
     "epochs": 50,
-    "dropout": 0.1,
+    "dropout": 0.2,
     "patience": 3,
     "data_fraction": 0.1,
     "label_smoothing": 0.1,
