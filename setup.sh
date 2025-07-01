@@ -18,33 +18,12 @@ fi
 
 # --- 2. Create Virtual Environment ---
 echo "🐍 Creating a clean virtual environment..."
-uv venv --python /usr/bin/python3.10 .venv
+uv venv --system-site-packages
 
-# --- 3. DYNAMIC DEPENDENCY DETECTION ---
-# Detects the pre-installed torch/numpy versions to ensure driver compatibility.
-echo "🔍 Detecting system-installed torch and numpy versions..."
-PY_SYSTEM="/usr/bin/python3.10"
-TORCH_VER=$($PY_SYSTEM -c "import torch; print(torch.__version__)")
-NUMPY_VER=$($PY_SYSTEM -c "import numpy; print(numpy.__version__)")
-
-if [[ -z "$TORCH_VER" ]]; then
-    echo "❌ Critical Error: Could not detect system-installed torch. Aborting."
-    exit 1
-fi
-echo "  ✅ Detected System PyTorch: $TORCH_VER"
-echo "  ✅ Detected System NumPy:   $NUMPY_VER"
-
-# --- 4. INJECT DYNAMIC DEPENDENCIES ---
-# Installs ONLY the detected versions into the new venv. This locks them in.
-echo "💉 Injecting detected torch and numpy versions into .venv..."
-uv pip install "torch==$TORCH_VER" "numpy==$NUMPY_VER"
-
-# --- 5. Install Static Dependencies ---
-# Syncs the default dependencies from pyproject.toml.
-# It will NOT install the 'local' group.
-# It will see numpy is already installed and will not overwrite it.
-echo "📦 Syncing remaining dependencies from pyproject.toml..."
-uv sync
+# --- 5. Install Dependencies from the Lock File ---
+# This installs the exact same package versions every time, ensuring reproducibility.
+echo "📦 Installing dependencies from lock file..."
+uv sync --no-install-package torch --no-install-package numpy
 
 # --- 6. Activate the Environment ---
 echo "✅ Environment setup complete! Activating .venv..."
