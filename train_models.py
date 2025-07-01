@@ -28,8 +28,9 @@ args = parser.parse_args()
 
 
 def collate_fn(batch):
-    images, captions = zip(*batch)
-    return {"images": list(images), "captions": list(captions)}
+    filenames, images = zip(*batch)          # images is a tuple of tensors/arrays
+    images = torch.stack([torch.as_tensor(img) for img in images])  # <-- stack!
+    return filenames, images
 
 
 class CustomDataLoader(DataLoader):

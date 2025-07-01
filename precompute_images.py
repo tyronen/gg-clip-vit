@@ -45,7 +45,7 @@ def main():
 
     # Dataset and DataLoader
     dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images", processor)
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     features = {}
 
