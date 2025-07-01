@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 import models
 
 hyperparameters = {
-    "batch_size": 128,
+    "batch_size": 192,
     "model_dim": 384,
     "ffn_dim": 1536,
     "num_heads": 8,
@@ -82,6 +82,7 @@ def loss_fn(batch, model):
         logits.view(-1, vocab_size),
         labels.contiguous().view(-1),
         ignore_index=model.tokenizer.pad_token_id,
+        label_smoothing=0.1,
     )
     return loss, logits, labels
 
@@ -119,6 +120,9 @@ def main():
     validation_dataloader = CustomDataLoader(validation_dataset, device)
     test_dataloader = CustomDataLoader(test_dataset, device)
 
+    # Total optimizer steps = batches per epoch × epochs
+    total_steps = len(training_dataloader) * hyperparameters["epochs"]
+
     maybe_autocast, scaler = utils.amp_components(device, True)
     model = models.CombinedTransformer(
         model_dim=hyperparameters["model_dim"],
@@ -135,8 +139,8 @@ def main():
         },
     ]
     optimizer = optim.Adam(params)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=2, factor=0.5
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=total_steps, eta_min=1e-6
     )
     best_val_loss = float("inf")
     patience_counter = 0
@@ -153,6 +157,9 @@ def main():
             optimizer.zero_grad()
             with maybe_autocast:
                 loss, logits, labels = loss_fn(batch, model)
+            if (i == 0):
+                free, total = torch.cuda.mem_get_info()       # bytes
+                logging.info(f"Free GB: {free/1e9:.2f} / {total/1e9:.2f}")
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
