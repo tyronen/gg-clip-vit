@@ -116,14 +116,14 @@ def get_git_commit():
 
 def main():
     if args.sweep:
-        sweep_id = wandb.sweep(sweep_config,  entity=args.entity, project=args.project)
+        sweep_id = wandb.sweep(sweep_config, entity=args.entity, project=args.project)
         wandb.agent(sweep_id, function=run_training)
     else:
         config = dict(hyperparameters)  # makes a shallow copy
         config["git_commit"] = get_git_commit()
         run_training(config)
 
-def run_training(config):
+def run_training(config=None, **_):
     utils.setup_logging()
     device = utils.get_device()
 
@@ -132,13 +132,16 @@ def run_training(config):
         config=config,
     )
 
+    if config is None:
+        config = dict(wandb.config)
+
     train_dataset = models.Flickr30kDataset(split="train", data_fraction=config["data_fraction"])
     validation_dataset = models.Flickr30kDataset(split="val", data_fraction=config["data_fraction"])
     test_dataset = models.Flickr30kDataset(split="test", data_fraction=config["data_fraction"])
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )
-    training_dataloader = CustomDataLoader(train_dataset, device, train=True, batch_size=config["batch_size"])
+    training_dataloader = CustomDataLoader(train_dataset, device, batch_size=config["batch_size"], train=True)
     validation_dataloader = CustomDataLoader(validation_dataset, device, batch_size=config["batch_size"])
     test_dataloader = CustomDataLoader(test_dataset, device, batch_size=config["batch_size"])
 
