@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import os
 import csv
+import kagglehub
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
@@ -11,14 +12,14 @@ import logging
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
+IMAGES_NPZ_PATH = "data/image_features.npz"
 
 import numpy as np
 
 
 class Flickr30kDataset(Dataset):
-    def __init__(self, data_dir, split="train", transform=None):
-        self.data_dir = data_dir
-        self.transform = transform
+    def __init__(self, split="train"):
+        data_dir = kagglehub.dataset_download("adityajn105/flickr30k")
 
         captions_path = os.path.join(data_dir, "captions.txt")
 
@@ -52,6 +53,7 @@ class Flickr30kDataset(Dataset):
         self.captions = [row for row in all_captions if row["image"] in split_images]
 
         self.img_dir = os.path.join(data_dir, "Images")
+        self.image_features = np.load(IMAGES_NPZ_PATH)
 
     def __len__(self):
         return len(self.captions)
@@ -59,12 +61,7 @@ class Flickr30kDataset(Dataset):
     def __getitem__(self, idx):
         row = self.captions[idx]
         img_filename = row["image"]
-        img_path = os.path.join(self.img_dir, img_filename)
-
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-
+        image = torch.tensor(self.image_features[img_filename])
         caption = row["caption"]
         return image, caption
 
@@ -199,8 +196,7 @@ class CombinedTransformer(nn.Module):
         tok_embed = self.token_embedding(input_ids)  # [B, L, D]
 
         # Encode image
-        vit_inputs = self.vit_processor(images=images, return_tensors="pt").to(device)
-        img_encoded = self.vit_model(**vit_inputs).last_hidden_state.mean(dim=1)
+        img_encoded = images.to(device)
         img_embed = self.image_projection(img_encoded).unsqueeze(1)  # [B, 1, D]
 
         # Prepend image embedding to caption embeddings
@@ -211,4 +207,3 @@ class CombinedTransformer(nn.Module):
 
         logits = self.linear(decoder_input[:, 1:, :])# [B, L-1, vocab]
         return logits, labels
-

@@ -109,11 +109,9 @@ def main():
         config=config,
     )
 
-    imagepath = kagglehub.dataset_download("adityajn105/flickr30k")
-
-    train_dataset = models.Flickr30kDataset(imagepath, split="train")
-    validation_dataset = models.Flickr30kDataset(imagepath, split="val")
-    test_dataset = models.Flickr30kDataset(imagepath, split="test")
+    train_dataset = models.Flickr30kDataset(split="train")
+    validation_dataset = models.Flickr30kDataset(split="val")
+    test_dataset = models.Flickr30kDataset(split="test")
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )
@@ -174,7 +172,7 @@ def main():
 
         run.log(
             {
-                "learning_rate": optimizer.params["lr"],
+                "learning_rate": optimizer.param_groups[0]["lr"],
                 "train_loss": avg_train_loss,
                 "val_loss": avg_val_loss,
                 "grad_norm": grad_norm,
