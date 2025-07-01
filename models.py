@@ -189,6 +189,7 @@ class CombinedTransformer(nn.Module):
         inputs = self.clip_processor(
             text=text, return_tensors="pt", padding=True, truncation=True
         )
+        # may not need line below
         text_features = self.clip_model.get_text_features(**inputs)
         return text_features  # Shape: [batch_size, 512]
 
@@ -205,4 +206,8 @@ class CombinedTransformer(nn.Module):
 
         embed_texts = self.text_projection(encoded_texts)
         embed_images = self.image_projection(encoded_images)
-        return embed_texts, embed_images
+        combined = torch.concat(embed_texts, embed_images)
+        for decoder in self.decoder_series:
+            combined = decoder(combined)
+        return self.linear(combined)
+

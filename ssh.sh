@@ -7,7 +7,7 @@ ssh-add .ssh/id_ed25519
 cd /workspace
 
 # ensure we have git, clone repo, cd in etc.
-apt-get update && apt-get install -y git
+apt-get install -y git
 git clone git@github.com:tyronen/gg-clip-vit.git || true
 cd gg-clip-vit
 git pull
