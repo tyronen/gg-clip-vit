@@ -12,7 +12,7 @@ import models
 import kagglehub
 
 hyperparameters = {
-    "batch_size": 1024,
+    "batch_size": 256,
     "model_dim": 512,
     "ffn_dim": 2048,
     "num_heads": 8,
