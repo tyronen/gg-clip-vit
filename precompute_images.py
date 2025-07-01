@@ -3,11 +3,31 @@ import csv
 import kagglehub
 import numpy as np
 from tqdm import tqdm
-from PIL import Image
+from jpeg4py import JPEG
 import models
 import torch
+from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoProcessor
 import utils
+
+class ViTFeatureDataset(Dataset):
+    def __init__(self, image_filenames, image_dir, processor):
+        self.image_filenames = image_filenames
+        self.image_dir = image_dir
+        self.processor = processor
+
+    def __len__(self):
+        return len(self.image_filenames)
+
+    def __getitem__(self, idx):
+        filename = self.image_filenames[idx]
+        path = os.path.join(self.image_dir, filename)
+        image = JPEG(path).decode()
+        return filename, image
+
+def collate_fn(batch):
+    filenames, images = zip(*batch)
+    return list(filenames), list(images)
 
 def main():
     device = utils.get_device()
@@ -24,19 +44,22 @@ def main():
         reader = csv.DictReader(f)
         image_filenames = sorted({row["image"] for row in reader})
 
-    # Extract features
-    features = {}
-    for filename in tqdm(image_filenames):
-        path = os.path.join(f"{imagepath}/Images", filename)
-        image = Image.open(path).convert("RGB")
-        inputs = processor(images=image, return_tensors="pt").to(device)
+    # Dataset and DataLoader
+    dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images", processor)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
+    features = {}
+
+    for filenames, images in tqdm(dataloader):
+        inputs = processor(images=images, return_tensors="pt").to(device)
         with torch.no_grad():
-            output = model(**inputs).last_hidden_state  # [1, 197, 768]
-            pooled = output.mean(dim=1).squeeze().cpu().numpy()  # [768]
-            features[filename] = pooled
+            outputs = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
+        for fname, vec in zip(filenames, outputs):
+            features[fname] = vec
 
     # Save
+    if os.path.exists(models.IMAGES_NPZ_PATH):
+        os.remove(models.IMAGES_NPZ_PATH)
     np.savez_compressed(models.IMAGES_NPZ_PATH, **features)
     print(f"Saved {len(features)} image embeddings to {models.IMAGES_NPZ_PATH}")
 
