@@ -10,6 +10,12 @@ from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 import logging
 
+# Global tokenizer for dataset-level pretokenization
+TOKENIZER = AutoTokenizer.from_pretrained(
+    "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
+)
+TOKENIZER.pad_token = TOKENIZER.eos_token
+
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
 IMAGES_PATH = "data/image_features.pt"
@@ -52,6 +58,7 @@ class Flickr30kDataset(Dataset):
         # Keep only caption rows whose image belongs to the chosen split
         self.captions = [row for row in all_captions if row["image"] in split_images]
 
+        self.tokenizer = TOKENIZER
         self.image_features = torch.load(IMAGES_PATH)
 
     def __len__(self):
@@ -62,7 +69,15 @@ class Flickr30kDataset(Dataset):
         img_filename = row["image"]
         image = torch.tensor(self.image_features[img_filename])
         caption = row["caption"]
-        return image, caption
+        # Pre‑tokenize caption once (LongTensor [L])
+        input_ids = self.tokenizer(
+            caption,
+            max_length=32,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids.squeeze(0)      # [L]
+        return image, input_ids
 
 
 def attention(k_dim, q, k, v, mask_tensor):
@@ -156,9 +171,7 @@ class CombinedTransformer(nn.Module):
         super().__init__()
         # Load pre-trained models
 
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True)
-        tokenizer.pad_token = tokenizer.eos_token  # avoid errors
-        self.tokenizer = tokenizer
+        self.tokenizer = TOKENIZER
 
         actual_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
         self.token_embedding = nn.Embedding(actual_vocab_size, model_dim)
@@ -186,13 +199,11 @@ class CombinedTransformer(nn.Module):
             [make_decoder() for _ in range(num_decoders)]
         )
 
-    def forward(self, images, captions):
+    def forward(self, images, input_ids):
         device = next(self.parameters()).device
-        tokenized = self.tokenizer(captions, padding=True, return_tensors="pt").to(device)
-        input_ids = tokenized.input_ids  # [B, L]
-        labels = input_ids[:, 1:]  # [B, L-1]
-        # Embed captions
-        tok_embed = self.token_embedding(input_ids)  # [B, L, D]
+        input_ids = input_ids.to(device)            # [B, L]
+        labels = input_ids[:, 1:]                   # [B, L-1]
+        tok_embed = self.token_embedding(input_ids) # [B, L, D]
 
         # Encode image
         img_encoded = images.to(device)

@@ -28,10 +28,10 @@ args = parser.parse_args()
 
 
 def collate_fn(batch):
-    # batch item = (image_tensor, caption_str)
-    images, captions = zip(*batch)                 # unpack tuples
-    images = torch.stack(images)                   # [B, 768]
-    return {"images": images, "captions": list(captions)}
+    images, input_ids = zip(*batch)
+    images     = torch.stack(images)            # [B, 768]
+    input_ids  = torch.stack(input_ids)         # [B, L]
+    return {"images": images, "input_ids": input_ids}
 
 
 class CustomDataLoader(DataLoader):
@@ -75,7 +75,7 @@ def validate_model(run, model, validation_dataloader, epoch, device):
 
 
 def loss_fn(batch, model):
-    logits, labels = model(batch["images"], batch["captions"])  
+    logits, labels = model(batch["images"], batch["input_ids"])  
 
     vocab_size = logits.size(-1)
     loss = F.cross_entropy(
