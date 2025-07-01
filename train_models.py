@@ -12,12 +12,12 @@ import models
 import kagglehub
 
 hyperparameters = {
+    "batch_size": 1024,
     "model_dim": 512,
     "ffn_dim": 2048,
     "num_heads": 8,
     "num_decoders": 6,
     "learning_rate": 1e-4,
-    "batch_size": 256,
     "epochs": 50,
     "dropout": 0.1,
     "patience": 5,
@@ -135,13 +135,20 @@ def _contrastive_forward(batch, model, temperature):
     return loss, logits, labels, image_embeds, text_embeds
 
 
+def get_git_commit():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+    except Exception:
+        return "unknown"
+
+
 def main():
     utils.setup_logging()
     device = utils.get_device()
 
-    config = {
-        **hyperparameters,
-    }
+    config = dict(hyperparameters)  # makes a shallow copy
+    config["git_commit"] = get_git_commit()
+
     run = wandb.init(
         # Set the wandb entity where your project will be logged (generally your team name).
         entity="mlx-institute",

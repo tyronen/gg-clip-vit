@@ -157,7 +157,7 @@ class CombinedTransformer(nn.Module):
     ):
         super().__init__()
         # Load pre-trained models
-        self.clip_processor = AutoProcessor.from_pretrained(CLIP)
+        self.clip_processor = AutoProcessor.from_pretrained(CLIP, use_fast=False)
         self.clip_model = AutoModel.from_pretrained(CLIP, use_safetensors=True)
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
         self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
@@ -206,7 +206,14 @@ class CombinedTransformer(nn.Module):
 
         embed_texts = self.text_projection(encoded_texts)
         embed_images = self.image_projection(encoded_images)
-        combined = torch.concat(embed_texts, embed_images)
+
+        # Add a sequence dimension (dim=1) to each tensor, changing shape from [B, D] to [B, 1, D]
+        embed_texts_seq = embed_texts.unsqueeze(1)
+        embed_images_seq = embed_images.unsqueeze(1)
+
+        # Concatenate along the new sequence dimension (dim=1) to create a single tensor
+        # of shape [B, 2, D] where 2 is the sequence length.
+        combined = torch.concat([embed_texts_seq, embed_images_seq], dim=1)
         for decoder in self.decoder_series:
             combined = decoder(combined)
         return self.linear(combined)

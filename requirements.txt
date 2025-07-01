@@ -1,0 +1,8 @@
+datasets
+kagglehub
+hf-transfer
+pillow
+regex
+tqdm
+transformers
+wandb
