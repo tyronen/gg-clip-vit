@@ -196,10 +196,6 @@ class CombinedTransformer(nn.Module):
         input_ids = tokenized.input_ids  # [B, L]
         labels = input_ids[:, 1:]  # [B, L-1]
         # Embed captions
-        max_id = input_ids.max()
-        vocab_size = self.tokenizer.vocab_size
-        print("tokenizer.vocab_size:", self.tokenizer.vocab_size)
-        print("max token index:", max(self.tokenizer.get_vocab().values()))
         tok_embed = self.token_embedding(input_ids)  # [B, L, D]
 
         # Encode image
