@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 import models
 
 hyperparameters = {
-    "batch_size": 128,
+    "batch_size": 16,
     "model_dim": 384,
     "ffn_dim": 1536,
     "num_heads": 8,
