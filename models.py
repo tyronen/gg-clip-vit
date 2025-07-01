@@ -36,15 +36,16 @@ class Flickr30kDataset(Dataset):
         np.random.shuffle(unique_images)
 
         n_images = len(unique_images)
-        train_end = int(0.8 * n_images)
-        val_end = int(0.9 * n_images)
+        train_end = int(0.08 * n_images)
+        val_end = int(0.09 * n_images)
+        test_end = int(0.1 * n_images)
 
         if split == "train":
             split_images = set(unique_images[:train_end])
         elif split == "val":
             split_images = set(unique_images[train_end:val_end])
         else:  # "test"
-            split_images = set(unique_images[val_end:])
+            split_images = set(unique_images[val_end:test_end])
 
         # Keep only caption rows whose image belongs to the chosen split
         self.captions = [row for row in all_captions if row["image"] in split_images]
