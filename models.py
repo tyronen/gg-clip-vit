@@ -200,6 +200,8 @@ class CombinedTransformer(nn.Module):
         )
 
     def forward(self, images, input_ids):
+        # input has to have tokenizer's start prepended
+        # labels has to have end token appended
         device = next(self.parameters()).device
         input_ids = input_ids.to(device)            # [B, L]
         labels = input_ids[:, 1:]                   # [B, L-1]
