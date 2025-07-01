@@ -1,3 +1,4 @@
+black
 datasets
 kagglehub
 hf-transfer

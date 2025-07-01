@@ -6,7 +6,7 @@ import os
 import csv
 from PIL import Image
 from torch.utils.data import Dataset
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
@@ -158,19 +158,21 @@ class CombinedTransformer(nn.Module):
     ):
         super().__init__()
         # Load pre-trained models
-        self.clip_processor = AutoProcessor.from_pretrained(CLIP, use_fast=False)
-        self.clip_model = AutoModel.from_pretrained(CLIP, use_safetensors=True)
+
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True)
+        tokenizer.pad_token = tokenizer.eos_token  # avoid errors
+        self.tokenizer = tokenizer
+
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
         self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
 
         # Freeze the pre-trained weights
-        for param in self.clip_model.parameters():
-            param.requires_grad = False
         for param in self.vit_model.parameters():
             param.requires_grad = False
 
         self.image_projection = nn.Linear(768, model_dim)
-        self.text_projection = nn.Linear(512, model_dim)
+        self.token_embedding = nn.Embedding(self.tokenizer.vocab_size, model_dim)
+        self.linear = nn.Linear(model_dim, self.tokenizer.vocab_size)
 
         def make_decoder() -> nn.Module:
             return Decoder(
@@ -183,39 +185,26 @@ class CombinedTransformer(nn.Module):
         self.decoder_series = nn.ModuleList(
             [make_decoder() for _ in range(num_decoders)]
         )
-        self.linear = nn.Linear(model_dim, model_dim)
 
-    def encode_text(self, text):
-        """Extract CLIP text features"""
-        tokens = self.clip_processor(
-            text=text, return_tensors="pt", padding=True, truncation=True
-        )
-        # may not need line below
-        text_features = self.clip_model.get_text_features(**tokens)
-        return tokens, text_features  # Shape: [batch_size, 512]
+    def forward(self, images, captions):
+        device = next(self.parameters()).device
+        tokenized = self.tokenizer(captions, padding=True, return_tensors="pt").to(device)
+        input_ids = tokenized.input_ids  # [B, L]
+        labels = input_ids[:, 1:]  # [B, L-1]
+        # Embed captions
+        tok_embed = self.token_embedding(input_ids)  # [B, L, D]
 
-    def encode_image_vit(self, images):
-        """Extract ViT features"""
-        inputs = self.vit_processor(images=images, return_tensors="pt")
-        outputs = self.vit_model(**inputs)
-        return outputs.last_hidden_state  # Shape: [batch_size, 197, 768]
+        # Encode image
+        vit_inputs = self.vit_processor(images=images, return_tensors="pt").to(device)
+        img_encoded = self.vit_model(**vit_inputs).last_hidden_state.mean(dim=1)
+        img_embed = self.image_projection(img_encoded).unsqueeze(1)  # [B, 1, D]
 
-    def forward(self, images, texts):
-        tokens, encoded_texts = self.encode_text(texts)
-        encoded_images = self.encode_image_vit(images)
-        encoded_images = encoded_images.mean(dim=1)
+        # Prepend image embedding to caption embeddings
+        decoder_input = torch.cat([img_embed, tok_embed[:, :-1, :]], dim=1)  # [B, L, D]
 
-        embed_texts = self.text_projection(encoded_texts)
-        embed_images = self.image_projection(encoded_images)
-
-        # Add a sequence dimension (dim=1) to each tensor, changing shape from [B, D] to [B, 1, D]
-        embed_texts_seq = embed_texts.unsqueeze(1)
-        embed_images_seq = embed_images.unsqueeze(1)
-
-        # Concatenate along the new sequence dimension (dim=1) to create a single tensor
-        # of shape [B, 2, D] where 2 is the sequence length.
-        combined = torch.concat([embed_texts_seq, embed_images_seq], dim=1)
         for decoder in self.decoder_series:
-            combined = decoder(combined)
-        return self.linear(combined), tokens
+            decoder_input = decoder(decoder_input)
+
+        logits = self.linear(decoder_input[:, 1:, :])# [B, L-1, vocab]
+        return logits, labels
 

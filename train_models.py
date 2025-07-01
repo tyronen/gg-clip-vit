@@ -21,7 +21,6 @@ hyperparameters = {
     "epochs": 50,
     "dropout": 0.1,
     "patience": 5,
-    "temperature": 0.05,
 }
 
 parser = argparse.ArgumentParser(description="Train simple model")
@@ -31,8 +30,8 @@ args = parser.parse_args()
 
 
 def collate_fn(batch):
-    images, texts = zip(*batch)
-    return {"images": list(images), "texts": list(texts)}
+    images, captions = zip(*batch)
+    return {"images": list(images), "captions": list(captions)}
 
 
 class CustomDataLoader(DataLoader):
@@ -56,12 +55,6 @@ def validate_model(run, model, validation_dataloader, epoch, device):
     total_loss = 0.0
     num_batches = 0
 
-    image_similarities = []
-    text_similarities = []
-
-    all_images = []
-    all_texts = []
-
     with torch.no_grad():  # Important: no gradients during validation
         for i, batch in tqdm(enumerate(validation_dataloader), desc="Validation"):
             # move only tensor items to the target device
@@ -70,56 +63,26 @@ def validate_model(run, model, validation_dataloader, epoch, device):
             }
 
             # Forward pass (shared with training)
-            (
-                loss,
-                logits,
-                labels,
-            ) = loss_fn(batch, model, hyperparameters["temperature"])
-
-            if i == 0:  # Only for first batch
-
-                # Check if embeddings are too similar to each other
-                image_mean = logits.mean(dim=0)
-                text_mean = labels.mean(dim=0)
-
-                # Check variance across dimensions
-                image_var = logits.var(dim=0).mean()
-                text_var = labels.var(dim=0).mean()
-
-                all_images.extend(logits.cpu())
-                all_texts.extend(labels.cpu())
-
-                run.log(
-                    {
-                        "embedding_means_image_norm": image_mean.norm().item(),
-                        "embedding_means_text_norm": text_mean.norm().item(),
-                        "embedding_variance_image": image_var.item(),
-                        "embedding_variance_text": text_var.item(),
-                    },
-                )
+            loss, logits, labels = loss_fn(batch, model)
 
             # loss already computed by loss_fn
             total_loss += loss.item()
             num_batches += 1
-
-    run.log(
-        {
-            "validation_image_similarities_mean": np.mean(image_similarities),
-            "validation_image_similarities_std": np.std(image_similarities),
-            "validation_text_similarities_mean": np.mean(text_similarities),
-            "validation_text_similarities_std": np.std(text_similarities),
-        },
-    )
 
     model.train()  # Set back to training mode
 
     return total_loss / num_batches
 
 
-def loss_fn(batch, model, temperature):
-    logits, labels = model(batch["images"], batch["texts"])
+def loss_fn(batch, model):
+    logits, labels = model(batch["images"], batch["captions"])  
 
-    loss = F.cross_entropy(logits, labels)
+    vocab_size = logits.size(-1)
+    loss = F.cross_entropy(
+        logits.view(-1, vocab_size),
+        labels.contiguous().view(-1),
+        ignore_index=model.tokenizer.pad_token_id,
+    )
     return loss, logits, labels
 
 
@@ -191,9 +154,7 @@ def main():
             }
             optimizer.zero_grad()
             with maybe_autocast:
-                loss, logits, labels = loss_fn(
-                    batch, model, hyperparameters["temperature"]
-                )
+                loss, logits, labels = loss_fn(batch, model)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
