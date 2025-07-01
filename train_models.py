@@ -7,9 +7,7 @@ import wandb
 from tqdm import tqdm
 import utils
 from torch.utils.data import DataLoader
-import numpy as np
 import models
-import kagglehub
 
 hyperparameters = {
     "batch_size": 128,

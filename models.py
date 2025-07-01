@@ -5,16 +5,15 @@ import torch.nn as nn
 import os
 import csv
 import kagglehub
-from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 import logging
+import numpy as np
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
-IMAGES_NPZ_PATH = "data/image_features.npz"
+IMAGES_PATH = "data/image_features.pt"
 
-import numpy as np
 
 
 class Flickr30kDataset(Dataset):
@@ -53,7 +52,7 @@ class Flickr30kDataset(Dataset):
         self.captions = [row for row in all_captions if row["image"] in split_images]
 
         self.img_dir = os.path.join(data_dir, "Images")
-        self.image_features = np.load(IMAGES_NPZ_PATH)
+        self.image_features = torch.load(IMAGES_PATH)
 
     def __len__(self):
         return len(self.captions)

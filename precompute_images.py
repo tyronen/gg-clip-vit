@@ -1,7 +1,6 @@
 import os
 import csv
 import kagglehub
-import numpy as np
 from tqdm import tqdm
 from jpeg4py import JPEG
 import models
@@ -46,7 +45,7 @@ def main():
 
     # Dataset and DataLoader
     dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images", processor)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     features = {}
 
@@ -58,10 +57,10 @@ def main():
             features[fname] = vec
 
     # Save
-    if os.path.exists(models.IMAGES_NPZ_PATH):
-        os.remove(models.IMAGES_NPZ_PATH)
-    np.savez_compressed(models.IMAGES_NPZ_PATH, **features)
-    print(f"Saved {len(features)} image embeddings to {models.IMAGES_NPZ_PATH}")
+    if os.path.exists(models.IMAGES_PATH):
+        os.remove(models.IMAGES_PATH)
+    torch.save(features, models.IMAGES_PATH)
+    print(f"Saved {len(features)} image embeddings to {models.IMAGES_PATH}")
 
 if __name__ == "__main__":
     main()
