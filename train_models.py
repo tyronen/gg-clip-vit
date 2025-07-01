@@ -28,9 +28,10 @@ args = parser.parse_args()
 
 
 def collate_fn(batch):
-    filenames, images = zip(*batch)          # images is a tuple of tensors/arrays
-    images = torch.stack([torch.as_tensor(img) for img in images])  # <-- stack!
-    return filenames, images
+    # batch item = (image_tensor, caption_str)
+    images, captions = zip(*batch)                 # unpack tuples
+    images = torch.stack(images)                   # [B, 768]
+    return {"images": images, "captions": list(captions)}
 
 
 class CustomDataLoader(DataLoader):
@@ -185,8 +186,11 @@ def main():
                 {
                     "state_dict": model.state_dict(),
                     "parameters": params,
-                    "embed_dim": hyperparameters["embed_dim"],
-                    "dropout_rate": hyperparameters["dropout_rate"],
+                    "model_dim": hyperparameters["model_dim"],
+                    "ffn_dim": hyperparameters["ffn_dim"],
+                    "num_heads": hyperparameters["num_heads"],
+                    "num_decoders": hyperparameters["num_decoders"],
+                    "dropout": hyperparameters["dropout"],
                 },
                 utils.MODEL_FILE,
             )
