@@ -164,8 +164,8 @@ class CombinedTransformer(nn.Module):
         tokenizer.pad_token = tokenizer.eos_token  # avoid errors
         self.tokenizer = tokenizer
 
-        true_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
-        self.token_embedding = nn.Embedding(true_vocab_size, model_dim)
+        actual_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
+        self.token_embedding = nn.Embedding(actual_vocab_size, model_dim)
 
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
         self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
@@ -176,7 +176,7 @@ class CombinedTransformer(nn.Module):
 
         self.image_projection = nn.Linear(768, model_dim)
 
-        self.linear = nn.Linear(model_dim, self.tokenizer.vocab_size)
+        self.linear = nn.Linear(model_dim, actual_vocab_size)
 
         def make_decoder() -> nn.Module:
             return Decoder(

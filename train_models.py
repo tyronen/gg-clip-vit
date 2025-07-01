@@ -128,7 +128,7 @@ def main():
         num_heads=hyperparameters["num_heads"],
         num_decoders=hyperparameters["num_decoders"],
         dropout=hyperparameters["dropout"],
-    )
+    ).to(device)
 
     params = [
         {
