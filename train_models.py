@@ -74,22 +74,20 @@ def validate_model(run, model, validation_dataloader, epoch, device):
                 loss,
                 logits,
                 labels,
-                image_embeds,
-                text_embeds,
-            ) = _contrastive_forward(batch, model, hyperparameters["temperature"])
+            ) = loss_fn(batch, model, hyperparameters["temperature"])
 
             if i == 0:  # Only for first batch
 
                 # Check if embeddings are too similar to each other
-                image_mean = image_embeds.mean(dim=0)
-                text_mean = text_embeds.mean(dim=0)
+                image_mean = logits.mean(dim=0)
+                text_mean = labels.mean(dim=0)
 
                 # Check variance across dimensions
-                image_var = image_embeds.var(dim=0).mean()
-                text_var = text_embeds.var(dim=0).mean()
+                image_var = logits.var(dim=0).mean()
+                text_var = labels.var(dim=0).mean()
 
-                all_images.extend(image_embeds.cpu())
-                all_texts.extend(text_embeds.cpu())
+                all_images.extend(logits.cpu())
+                all_texts.extend(labels.cpu())
 
                 run.log(
                     {
@@ -98,10 +96,9 @@ def validate_model(run, model, validation_dataloader, epoch, device):
                         "embedding_variance_image": image_var.item(),
                         "embedding_variance_text": text_var.item(),
                     },
-                    step=epoch,
                 )
 
-            # loss already computed by _contrastive_forward
+            # loss already computed by loss_fn
             total_loss += loss.item()
             num_batches += 1
 
@@ -112,7 +109,6 @@ def validate_model(run, model, validation_dataloader, epoch, device):
             "validation_text_similarities_mean": np.mean(text_similarities),
             "validation_text_similarities_std": np.std(text_similarities),
         },
-        step=epoch,
     )
 
     model.train()  # Set back to training mode
@@ -120,19 +116,11 @@ def validate_model(run, model, validation_dataloader, epoch, device):
     return total_loss / num_batches
 
 
-# ------------------------------------------------------------------ #
-# Shared forward pass + in‑batch contrastive loss
-# ------------------------------------------------------------------ #
-def _contrastive_forward(batch, model, temperature):
-    image_embeds, text_embeds = model(batch["images"], batch["texts"])
+def loss_fn(batch, model, temperature):
+    logits, labels = model(batch["images"], batch["texts"])
 
-    logits = torch.matmul(image_embeds, text_embeds.T) / temperature  # [B,2B]
-    labels = torch.arange(len(image_embeds), device=image_embeds.device)
-
-    loss_i2t = F.cross_entropy(logits, labels)
-    loss_t2i = F.cross_entropy(logits.T, labels)
-    loss = (loss_i2t + loss_t2i) / 2
-    return loss, logits, labels, image_embeds, text_embeds
+    loss = F.cross_entropy(logits, labels)
+    return loss, logits, labels
 
 
 def get_git_commit():
@@ -203,7 +191,7 @@ def main():
             }
             optimizer.zero_grad()
             with maybe_autocast:
-                loss, logits, labels, image, text = _contrastive_forward(
+                loss, logits, labels = loss_fn(
                     batch, model, hyperparameters["temperature"]
                 )
 
@@ -230,7 +218,6 @@ def main():
                 "val_loss": avg_val_loss,
                 "grad_norm": grad_norm,
             },
-            step=epoch,
         )
         last_epoch += 1
         if avg_val_loss < best_val_loss:
@@ -261,7 +248,6 @@ def main():
     )
     run.log(
         {"test_loss": test_loss},
-        step=last_epoch + 1,
     )
     artifact = wandb.Artifact(name="basic-decoder-model", type="model")
     artifact.add_file(utils.MODEL_FILE)

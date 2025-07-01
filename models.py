@@ -186,12 +186,12 @@ class CombinedTransformer(nn.Module):
 
     def encode_text(self, text):
         """Extract CLIP text features"""
-        inputs = self.clip_processor(
+        tokens = self.clip_processor(
             text=text, return_tensors="pt", padding=True, truncation=True
         )
         # may not need line below
-        text_features = self.clip_model.get_text_features(**inputs)
-        return text_features  # Shape: [batch_size, 512]
+        text_features = self.clip_model.get_text_features(**tokens)
+        return tokens, text_features  # Shape: [batch_size, 512]
 
     def encode_image_vit(self, images):
         """Extract ViT features"""
@@ -200,7 +200,7 @@ class CombinedTransformer(nn.Module):
         return outputs.last_hidden_state  # Shape: [batch_size, 197, 768]
 
     def forward(self, images, texts):
-        encoded_texts = self.encode_text(texts)
+        tokens, encoded_texts = self.encode_text(texts)
         encoded_images = self.encode_image_vit(images)
         encoded_images = encoded_images.mean(dim=1)
 
@@ -216,5 +216,5 @@ class CombinedTransformer(nn.Module):
         combined = torch.concat([embed_texts_seq, embed_images_seq], dim=1)
         for decoder in self.decoder_series:
             combined = decoder(combined)
-        return self.linear(combined)
+        return self.linear(combined), tokens
 
