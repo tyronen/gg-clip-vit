@@ -175,7 +175,7 @@ def main():
         logging.info(f"Epoch {epoch + 1}/{hyperparameters['epochs']}")
         avg_train_loss = total_train_loss / num_train_batches
         avg_val_loss = validate_model(run, model, validation_dataloader, epoch, device)
-        scheduler.step(avg_val_loss)
+        scheduler.step()
 
         run.log(
             {

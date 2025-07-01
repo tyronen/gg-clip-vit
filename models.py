@@ -44,9 +44,9 @@ class Flickr30kDataset(Dataset):
         np.random.shuffle(unique_images)
 
         n_images = len(unique_images)
-        train_end = int(0.08 * n_images)
-        val_end = int(0.09 * n_images)
-        test_end = int(0.1 * n_images)
+        train_end = int(0.8 * n_images)
+        val_end = int(0.9 * n_images)
+        test_end = n_images
 
         if split == "train":
             split_images = set(unique_images[:train_end])
