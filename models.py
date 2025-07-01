@@ -7,6 +7,7 @@ import csv
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
+import logging
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
@@ -163,6 +164,9 @@ class CombinedTransformer(nn.Module):
         tokenizer.pad_token = tokenizer.eos_token  # avoid errors
         self.tokenizer = tokenizer
 
+        true_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
+        self.token_embedding = nn.Embedding(true_vocab_size, model_dim)
+
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
         self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
 
@@ -171,7 +175,7 @@ class CombinedTransformer(nn.Module):
             param.requires_grad = False
 
         self.image_projection = nn.Linear(768, model_dim)
-        self.token_embedding = nn.Embedding(self.tokenizer.vocab_size, model_dim)
+
         self.linear = nn.Linear(model_dim, self.tokenizer.vocab_size)
 
         def make_decoder() -> nn.Module:
@@ -192,6 +196,10 @@ class CombinedTransformer(nn.Module):
         input_ids = tokenized.input_ids  # [B, L]
         labels = input_ids[:, 1:]  # [B, L-1]
         # Embed captions
+        max_id = input_ids.max()
+        vocab_size = self.tokenizer.vocab_size
+        print("tokenizer.vocab_size:", self.tokenizer.vocab_size)
+        print("max token index:", max(self.tokenizer.get_vocab().values()))
         tok_embed = self.token_embedding(input_ids)  # [B, L, D]
 
         # Encode image
