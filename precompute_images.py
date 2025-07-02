@@ -2,18 +2,19 @@ import os
 import csv
 import kagglehub
 from tqdm import tqdm
-from jpeg4py import JPEG
 import models
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoProcessor
 import utils
 
+from PIL import Image
+
+
 class ViTFeatureDataset(Dataset):
-    def __init__(self, image_filenames, image_dir, processor):
+    def __init__(self, image_filenames, image_dir):
         self.image_filenames = image_filenames
         self.image_dir = image_dir
-        self.processor = processor
 
     def __len__(self):
         return len(self.image_filenames)
@@ -21,12 +22,14 @@ class ViTFeatureDataset(Dataset):
     def __getitem__(self, idx):
         filename = self.image_filenames[idx]
         path = os.path.join(self.image_dir, filename)
-        image = JPEG(path).decode()
+        image = Image.open(path).convert("RGB")
         return filename, image
+
 
 def collate_fn(batch):
     filenames, images = zip(*batch)
     return list(filenames), list(images)
+
 
 def main():
     device = utils.get_device()
@@ -44,8 +47,10 @@ def main():
         image_filenames = sorted({row["image"] for row in reader})
 
     # Dataset and DataLoader
-    dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images", processor)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images")
+    dataloader = DataLoader(
+        dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn
+    )
 
     features = {}
 
@@ -61,6 +66,7 @@ def main():
         os.remove(models.IMAGES_PATH)
     torch.save(features, models.IMAGES_PATH)
     print(f"Saved {len(features)} image embeddings to {models.IMAGES_PATH}")
+
 
 if __name__ == "__main__":
     main()
