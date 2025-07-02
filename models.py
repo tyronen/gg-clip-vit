@@ -14,7 +14,7 @@ import logging
 TOKENIZER = AutoTokenizer.from_pretrained(
     "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
 )
-TOKENIZER.pad_token = TOKENIZER.eos_token
+TOKENIZER.bos_token = "<|im_start|>"
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
@@ -72,12 +72,16 @@ class Flickr30kDataset(Dataset):
         # Pre‑tokenize caption once (LongTensor [L])
         input_ids = self.tokenizer(
             caption,
-            max_length=32,
-            padding="max_length",
+            max_length=30,
+            add_special_tokens=False,
             truncation=True,
-            return_tensors="pt",
-        ).input_ids.squeeze(0)      # [L]
-        return image, input_ids
+        ).input_ids
+        input_ids = (
+            [self.tokenizer.bos_token_id] + input_ids + [self.tokenizer.eos_token_id]
+        )
+        input_ids.extend([self.tokenizer.pad_token_id] * (32 - len(input_ids)))
+        input_tensor = torch.tensor(input_ids, dtype=torch.long)
+        return image, input_tensor
 
 
 def attention(k_dim, q, k, v, mask_tensor):
@@ -92,9 +96,7 @@ def attention(k_dim, q, k, v, mask_tensor):
 
 
 class SelfAttention(nn.Module):
-    def __init__(
-        self, model_dim: int, num_heads: int, mask: bool, dropout: float = 0.1
-    ):
+    def __init__(self, model_dim: int, num_heads: int, dropout: float = 0.1):
         super().__init__()
         self.num_heads = num_heads
         self.model_dim = model_dim
@@ -102,12 +104,11 @@ class SelfAttention(nn.Module):
         self.wqkv = nn.Linear(model_dim, 3 * model_dim, bias=False)
         self.endmulti = nn.Linear(model_dim, model_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
-        self.mask = mask
 
     def rearrange(self, vector, B, L):
         return vector.reshape(B, L, self.num_heads, self.k_dim).transpose(1, 2)
 
-    def forward(self, x):
+    def forward(self, x, pad_mask):
         B, L, D = x.shape
         qkv = self.wqkv(x)
         q, k, v = qkv.split(self.model_dim, dim=-1)
@@ -115,11 +116,11 @@ class SelfAttention(nn.Module):
         kh = self.rearrange(k, B, L)
         vh = self.rearrange(v, B, L)
 
-        mask_tensor = None
-        if self.mask:
-            mask_tensor = torch.triu(
-                torch.ones(L, L, device=x.device), diagonal=1
-            ).bool()
+        mask_tensor = torch.triu(torch.ones(L, L, device=x.device), diagonal=1).bool()
+        # Expand to 1×1×L×L so it can broadcast with per‑batch pad masks and per‑head scores
+        mask_tensor = mask_tensor.unsqueeze(0).unsqueeze(0)
+        pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
+        mask_tensor = mask_tensor | pad_mask
 
         attended = attention(self.k_dim, qh, kh, vh, mask_tensor=mask_tensor)
         concatted = attended.transpose(1, 2).reshape(B, L, self.model_dim)
@@ -144,16 +145,14 @@ class FeedForward(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, model_dim: int, ffn_dim: int, num_heads: int, dropout: float):
         super().__init__()
-        self.masked_self_mha = SelfAttention(
-            model_dim=model_dim, num_heads=num_heads, mask=True
-        )
+        self.masked_self_mha = SelfAttention(model_dim=model_dim, num_heads=num_heads)
         self.norm1 = nn.LayerNorm(model_dim)
         self.ffn = FeedForward(model_dim=model_dim, ffn_dim=ffn_dim)
         self.norm2 = nn.LayerNorm(model_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, data):
-        stage1 = self.masked_self_mha(data)
+    def forward(self, data, pad_mask):
+        stage1 = self.masked_self_mha(data, pad_mask)
         addnormed_text = self.norm1(data + self.dropout(stage1))
         ffned = self.ffn(addnormed_text)
         return self.norm2(addnormed_text + self.dropout(ffned))
@@ -199,13 +198,10 @@ class CombinedTransformer(nn.Module):
             [make_decoder() for _ in range(num_decoders)]
         )
 
-    def forward(self, images, input_ids):
-        # input has to have tokenizer's start prepended
-        # labels has to have end token appended
+    def forward(self, images, input_ids, pad_mask):
         device = next(self.parameters()).device
-        input_ids = input_ids.to(device)            # [B, L]
-        labels = input_ids[:, 1:]                   # [B, L-1]
-        tok_embed = self.token_embedding(input_ids) # [B, L, D]
+        input_ids = input_ids.to(device)  # [B, L]
+        tok_embed = self.token_embedding(input_ids)  # [B, L, D]
 
         # Encode image
         img_encoded = images.to(device)
@@ -213,9 +209,14 @@ class CombinedTransformer(nn.Module):
 
         # Prepend image embedding to caption embeddings
         decoder_input = torch.cat([img_embed, tok_embed[:, :-1, :]], dim=1)  # [B, L, D]
-
+        pad_mask = torch.cat(
+            [
+                torch.zeros_like(pad_mask[:, :1]),  # image vector is never pad
+                pad_mask[:, :-1],
+            ],  # align rest of caption
+            dim=1,
+        )
         for decoder in self.decoder_series:
-            decoder_input = decoder(decoder_input)
+            decoder_input = decoder(decoder_input, pad_mask)
 
-        logits = self.linear(decoder_input[:, 1:, :])# [B, L-1, vocab]
-        return logits, labels
+        return self.linear(decoder_input[:, 1:, :])  # [B, L-1, vocab]

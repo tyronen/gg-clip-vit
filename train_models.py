@@ -33,11 +33,15 @@ sweep_config = {
         "ffn_dim": {"values": [1536, 2048]},
         "num_heads": {"values": [8]},
         "num_decoders": {"values": [4]},
-        "learning_rate": {"distribution": "log_uniform_values", "min": 5e-5, "max": 5e-4},
+        "learning_rate": {
+            "distribution": "log_uniform_values",
+            "min": 5e-5,
+            "max": 5e-4,
+        },
         "epochs": {"values": [20]},
         "dropout": {"values": [0.0, 0.1, 0.2]},
         "patience": {"values": [3, 5, 10]},
-        "data_fraction": { "values": [0.1]},
+        "data_fraction": {"values": [0.1]},
         "label_smoothing": {"values": [0.0, 0.05, 0.1]},
     },
 }
@@ -52,9 +56,10 @@ args = parser.parse_args()
 
 def collate_fn(batch):
     images, input_ids = zip(*batch)
-    images     = torch.stack(images)            # [B, 768]
-    input_ids  = torch.stack(input_ids)         # [B, L]
-    return {"images": images, "input_ids": input_ids}
+    images = torch.stack(images)  # [B, 768]
+    input_ids = torch.stack(input_ids)  # [B, L]
+    pad_mask = input_ids == models.TOKENIZER.pad_token_id
+    return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
 
 
 class CustomDataLoader(DataLoader):
@@ -72,7 +77,7 @@ class CustomDataLoader(DataLoader):
         )
 
 
-def validate_model(run, model, validation_dataloader, epoch, device, config):
+def validate_model(model, validation_dataloader, epoch, device, config):
     model.eval()
 
     total_loss = 0.0
@@ -98,7 +103,9 @@ def validate_model(run, model, validation_dataloader, epoch, device, config):
 
 
 def loss_fn(batch, model, label_smoothing):
-    logits, labels = model(batch["images"], batch["input_ids"])  
+    input_ids = batch["input_ids"]
+    labels = input_ids[:, 1:]  # [B, L-1]
+    logits = model(batch["images"], input_ids, batch["pad_mask"])
 
     vocab_size = logits.size(-1)
     loss = F.cross_entropy(
@@ -123,11 +130,14 @@ def main():
         config["git_commit"] = get_git_commit()
         run_training(config)
 
+
 def run_training(config=None, **_):
     utils.setup_logging()
     device = utils.get_device()
 
-    run = wandb.init(entity=args.entity, project=args.project,
+    run = wandb.init(
+        entity=args.entity,
+        project=args.project,
         # Track hyperparameters and run metadata.
         config=config,
     )
@@ -135,15 +145,27 @@ def run_training(config=None, **_):
     if config is None:
         config = dict(wandb.config)
 
-    train_dataset = models.Flickr30kDataset(split="train", data_fraction=config["data_fraction"])
-    validation_dataset = models.Flickr30kDataset(split="val", data_fraction=config["data_fraction"])
-    test_dataset = models.Flickr30kDataset(split="test", data_fraction=config["data_fraction"])
+    train_dataset = models.Flickr30kDataset(
+        split="train", data_fraction=config["data_fraction"]
+    )
+    validation_dataset = models.Flickr30kDataset(
+        split="val", data_fraction=config["data_fraction"]
+    )
+    test_dataset = models.Flickr30kDataset(
+        split="test", data_fraction=config["data_fraction"]
+    )
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )
-    training_dataloader = CustomDataLoader(train_dataset, device, batch_size=config["batch_size"], train=True)
-    validation_dataloader = CustomDataLoader(validation_dataset, device, batch_size=config["batch_size"])
-    test_dataloader = CustomDataLoader(test_dataset, device, batch_size=config["batch_size"])
+    training_dataloader = CustomDataLoader(
+        train_dataset, device, batch_size=config["batch_size"], train=True
+    )
+    validation_dataloader = CustomDataLoader(
+        validation_dataset, device, batch_size=config["batch_size"]
+    )
+    test_dataloader = CustomDataLoader(
+        test_dataset, device, batch_size=config["batch_size"]
+    )
 
     # Total optimizer steps = batches per epoch × epochs
     total_steps = len(training_dataloader) * config["epochs"]
@@ -166,7 +188,7 @@ def run_training(config=None, **_):
     ]
     optimizer = optim.Adam(params)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config["epochs"], eta_min=1e-6
+        optimizer, T_max=total_steps, eta_min=1e-6
     )
     best_val_loss = float("inf")
     patience_counter = 0
@@ -197,7 +219,9 @@ def run_training(config=None, **_):
 
         logging.info(f"Epoch {epoch + 1}/{config['epochs']}")
         avg_train_loss = total_train_loss / num_train_batches
-        avg_val_loss = validate_model(run, model, validation_dataloader, epoch, device, config)
+        avg_val_loss = validate_model(
+            model, validation_dataloader, epoch, device, config
+        )
         scheduler.step()
 
         run.log(
@@ -233,7 +257,7 @@ def run_training(config=None, **_):
             break
     checkpoint = torch.load(utils.MODEL_FILE)
     model.load_state_dict(checkpoint["state_dict"])
-    test_loss = validate_model(run, model, test_dataloader, last_epoch + 1, device, config)
+    test_loss = validate_model(model, test_dataloader, last_epoch + 1, device, config)
     run.log(
         {"test_loss": test_loss},
     )
