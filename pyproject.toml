@@ -20,4 +20,5 @@ dependencies = [
     "torch>=2.6.0",
     "torchvision>=0.22.0",
     "jpeg4py>=0.1.4",
+    "kaggle>=1.7.4.5",
 ]
