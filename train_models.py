@@ -13,10 +13,10 @@ import subprocess
 hyperparameters = {
     "batch_size": 192,
     "model_dim": 512,
-    "ffn_dim": 2048,
+    "ffn_dim": 1536,
     "num_heads": 8,
     "num_decoders": 4,
-    "learning_rate": 1e-4,
+    "learning_rate": 5e-4,
     "epochs": 50,
     "dropout": 0.1,
     "patience": 3,

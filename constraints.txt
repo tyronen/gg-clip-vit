@@ -1,2 +1,3 @@
+# This file is auto-generated to constrain torch and numpy to the system versions.
 torch==2.2.0+cu121
 numpy==1.26.3
