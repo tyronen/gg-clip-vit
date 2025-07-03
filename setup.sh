@@ -2,7 +2,6 @@
 # run like `source setup.sh` on any remote to ensure active shell is set up
 
 # --- 1. System Setup ---
-apt-get install -y vim rsync git nvtop htop tmux curl ca-certificates git-lfs lsof nano libjpegturbo
 cp ~/.env .env
 set -a; source .env; set +a
 
