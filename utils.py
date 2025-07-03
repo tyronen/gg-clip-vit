@@ -4,10 +4,14 @@ from contextlib import nullcontext
 import torch
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
-
-from train_models import collate_fn
+from transformers import AutoTokenizer
 
 MODEL_FILE = "data/models.pth"
+
+TOKENIZER = AutoTokenizer.from_pretrained(
+    "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
+)
+TOKENIZER.bos_token = "<|im_start|>"
 
 
 def setup_logging():
@@ -31,6 +35,14 @@ def amp_components(device, train=False):
     else:
         # fall-back: no automatic casting, dummy scaler
         return nullcontext(), GradScaler(enabled=False)
+
+
+def collate_fn(batch):
+    images, input_ids = zip(*batch)
+    images = torch.stack(images)  # [B, 768]
+    input_ids = torch.stack(input_ids)  # [B, L]
+    pad_mask = input_ids == TOKENIZER.pad_token_id
+    return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
 
 
 class CustomDataLoader(DataLoader):

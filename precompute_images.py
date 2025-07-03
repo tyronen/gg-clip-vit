@@ -38,7 +38,7 @@ def main():
 
     # Load ViT
     processor = AutoProcessor.from_pretrained(models.VIT)
-    model = AutoModel.from_pretrained(models.VIT, use_safetensors=True).to(device)
+    model = models.VitEncoder()
     model.eval()
 
     # Read list of unique image filenames
@@ -55,9 +55,7 @@ def main():
     features = {}
 
     for filenames, images in tqdm(dataloader):
-        inputs = processor(images=images, return_tensors="pt").to(device)
-        with torch.no_grad():
-            outputs = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
+        outputs = model(images)
         for fname, vec in zip(filenames, outputs):
             features[fname] = vec
 

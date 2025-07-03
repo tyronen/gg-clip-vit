@@ -55,12 +55,6 @@ parser.add_argument("--check", help="Make sure it works", action="store_true")
 args = parser.parse_args()
 
 
-def collate_fn(batch):
-    images, input_ids = zip(*batch)
-    images = torch.stack(images)  # [B, 768]
-    input_ids = torch.stack(input_ids)  # [B, L]
-    pad_mask = input_ids == models.TOKENIZER.pad_token_id
-    return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
 
 
 def validate_model(model, validation_dataloader, epoch, device, config):

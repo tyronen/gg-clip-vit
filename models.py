@@ -5,16 +5,10 @@ import torch.nn as nn
 import os
 import csv
 import kagglehub
-from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
-import logging
 
-# Global tokenizer for dataset-level pretokenization
-TOKENIZER = AutoTokenizer.from_pretrained(
-    "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
-)
-TOKENIZER.bos_token = "<|im_start|>"
+import utils
 
 CLIP = "openai/clip-vit-base-patch32"
 VIT = "google/vit-base-patch16-224-in21k"
@@ -58,7 +52,7 @@ class Flickr30kDataset(Dataset):
         # Keep only caption rows whose image belongs to the chosen split
         self.captions = [row for row in all_captions if row["image"] in split_images]
 
-        self.tokenizer = TOKENIZER
+        self.tokenizer = utils.TOKENIZER
         self.image_features = torch.load(IMAGES_PATH)
 
     def __len__(self):
@@ -158,6 +152,25 @@ class Decoder(nn.Module):
         return self.norm2(addnormed_text + self.dropout(ffned))
 
 
+class VitEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
+        self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
+
+        # Freeze the pre-trained weights
+        for param in self.vit_model.parameters():
+            param.requires_grad = False
+
+    def forward(self, images):
+        inputs = self.vit_processor(images=images, return_tensors="pt")
+        with torch.no_grad():
+            outputs = (
+                self.vit_model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
+            )
+        return outputs
+
+
 class CombinedTransformer(nn.Module):
     def __init__(
         self,
@@ -168,22 +181,15 @@ class CombinedTransformer(nn.Module):
         dropout: float,
     ):
         super().__init__()
-        # Load pre-trained models
 
-        self.tokenizer = TOKENIZER
+        self.vit_encoder = VitEncoder()  # inference only
+
+        self.tokenizer = utils.TOKENIZER
 
         actual_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
         self.token_embedding = nn.Embedding(actual_vocab_size, model_dim)
 
-        self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
-        self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
-
-        # Freeze the pre-trained weights
-        for param in self.vit_model.parameters():
-            param.requires_grad = False
-
         self.image_projection = nn.Linear(768, model_dim)
-
         self.linear = nn.Linear(model_dim, actual_vocab_size)
 
         def make_decoder() -> nn.Module:
@@ -197,6 +203,11 @@ class CombinedTransformer(nn.Module):
         self.decoder_series = nn.ModuleList(
             [make_decoder() for _ in range(num_decoders)]
         )
+
+    # for inference
+    def encode_image(self, image):
+        image_features = self.vit_encoder([image])
+        return self.image_projection(image_features)  # [B, model_dim]
 
     def forward(self, images, input_ids, pad_mask):
         device = next(self.parameters()).device
