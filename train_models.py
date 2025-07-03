@@ -6,9 +6,10 @@ import argparse
 import wandb
 from tqdm import tqdm
 import utils
-from torch.utils.data import DataLoader
 import models
 import subprocess
+
+from utils import CustomDataLoader
 
 hyperparameters = {
     "batch_size": 192,
@@ -60,21 +61,6 @@ def collate_fn(batch):
     input_ids = torch.stack(input_ids)  # [B, L]
     pad_mask = input_ids == models.TOKENIZER.pad_token_id
     return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
-
-
-class CustomDataLoader(DataLoader):
-    def __init__(self, dataset, device, batch_size, train=False):
-        num_workers = 8 if device.type == "cuda" else 0 if device.type == "mps" else 4
-        super().__init__(
-            dataset,
-            batch_size=batch_size,
-            shuffle=train,
-            drop_last=train,
-            pin_memory=(device.type == "cuda"),
-            num_workers=num_workers,
-            persistent_workers=(num_workers > 0),
-            collate_fn=collate_fn,
-        )
 
 
 def validate_model(model, validation_dataloader, epoch, device, config):

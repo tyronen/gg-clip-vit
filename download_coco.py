@@ -116,15 +116,18 @@ def get_coco_urls(num_images, split="train2017"):
         return []
 
 
-async def download_sample(sample_images, max_connections=300):
-    """Download all images concurrently - COCO has no rate limiting!"""
+async def download_sample(sample_images, max_connections=50):
+    """Download all images concurrently with conservative rate limiting."""
     total = len(sample_images)
-    timeout = httpx.Timeout(20.0, connect=5.0)  # Faster timeouts
+    timeout = httpx.Timeout(30.0, connect=10.0)  # More generous timeouts
 
     semaphore = asyncio.Semaphore(max_connections)
+    # Rate limiter: limit requests per second to avoid triggering server throttling
+    rate_limiter = asyncio.Semaphore(20)  # Max 20 requests at once
 
-    # Higher limits since COCO doesn't rate limit
-    limits = httpx.Limits(max_keepalive_connections=100, max_connections=300)
+    # Conservative connection limits
+    limits = httpx.Limits(max_keepalive_connections=50, max_connections=50)
+    
     async with httpx.AsyncClient(
         http2=True,
         headers={"User-Agent": USER_AGENT},
@@ -141,15 +144,18 @@ async def download_sample(sample_images, max_connections=300):
 
         async def _worker(img):
             async with semaphore:
-                success, download_time, write_time, size = await _download_one_async(
-                    img, client
-                )
-                if success and size > 0:
-                    download_times.append(download_time)
-                    write_times.append(write_time)
-                    sizes.append(size)
-                pbar.update()
-                return success
+                async with rate_limiter:
+                    # Small delay to spread out requests
+                    await asyncio.sleep(0.05)  # 50ms delay between requests
+                    success, download_time, write_time, size = await _download_one_async(
+                        img, client
+                    )
+                    if success and size > 0:
+                        download_times.append(download_time)
+                        write_times.append(write_time)
+                        sizes.append(size)
+                    pbar.update()
+                    return success
 
         start_time = time.time()
         tasks = [asyncio.create_task(_worker(img)) for img in sample_images]
@@ -178,12 +184,11 @@ async def download_sample(sample_images, max_connections=300):
 
 async def _download_one_async(image_dict, client):
     """Async downloader - COCO should be much more reliable."""
-    start_time = time.time()
     out_path = Path(f"data/coco/{image_dict['filename']}")
     if out_path.exists():
         return 1, 0, 0, 0  # success, download_time, write_time, size
 
-    for attempt in range(3):
+    for attempt in range(5):  # Increased retries
         try:
             download_start = time.time()
             r = await client.get(image_dict["url"])
@@ -204,7 +209,10 @@ async def _download_one_async(image_dict, client):
                 f"HTTP error {exc} on {image_dict['filename']} (try {attempt+1})"
             )
 
-        await asyncio.sleep(2**attempt)  # Exponential backoff
+        # More gradual backoff with jitter to avoid thundering herd
+        base_delay = min(2**attempt, 30)  # Cap at 30 seconds
+        jitter = random.uniform(0.5, 1.5)  # Add randomness
+        await asyncio.sleep(base_delay * jitter)
     return 0, 0, 0, 0
 
 
