@@ -1,12 +1,14 @@
 import logging
 from contextlib import nullcontext
-
+import kagglehub
 import torch
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+import csv
 
 MODEL_FILE = "data/models.pth"
+DATA_FRACTION = 0.01
 
 TOKENIZER = AutoTokenizer.from_pretrained(
     "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
@@ -36,6 +38,19 @@ def amp_components(device, train=False):
         # fall-back: no automatic casting, dummy scaler
         return nullcontext(), GradScaler(enabled=False)
 
+
+def get_captions():
+    imagepath = kagglehub.dataset_download("adityajn105/flickr30k")
+
+    # Read list of unique image filenames
+    with open(f"{imagepath}/captions.txt", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        image_filenames = sorted({row["image"] for row in reader})
+
+    if DATA_FRACTION < 1:
+        num_images = int(DATA_FRACTION * len(image_filenames))
+        image_filenames = image_filenames[:num_images]
+    return image_filenames
 
 def collate_fn(batch):
     images, input_ids = zip(*batch)

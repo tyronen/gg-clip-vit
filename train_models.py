@@ -21,7 +21,7 @@ hyperparameters = {
     "epochs": 50,
     "dropout": 0.1,
     "patience": 3,
-    "data_fraction": 0.1,
+    "data_fraction": utils.DATA_FRACTION,
     "label_smoothing": 0.1,
 }
 
@@ -125,15 +125,9 @@ def run_training(config=None, **_):
     if config is None:
         config = dict(wandb.config)
 
-    train_dataset = models.Flickr30kDataset(
-        split="train", data_fraction=config["data_fraction"]
-    )
-    validation_dataset = models.Flickr30kDataset(
-        split="val", data_fraction=config["data_fraction"]
-    )
-    test_dataset = models.Flickr30kDataset(
-        split="test", data_fraction=config["data_fraction"]
-    )
+    train_dataset = models.Flickr30kDataset(split="train")
+    validation_dataset = models.Flickr30kDataset(split="val")
+    test_dataset = models.Flickr30kDataset(split="test")
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )

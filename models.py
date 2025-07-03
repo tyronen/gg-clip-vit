@@ -3,8 +3,6 @@ import math
 import torch
 import torch.nn as nn
 import os
-import csv
-import kagglehub
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
@@ -18,17 +16,8 @@ import numpy as np
 
 
 class Flickr30kDataset(Dataset):
-    def __init__(self, split="train", data_fraction=1.0):
-        data_dir = kagglehub.dataset_download("adityajn105/flickr30k")
-
-        captions_path = os.path.join(data_dir, "captions.txt")
-
-        # Load the caption records without pandas
-        with open(captions_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(
-                f, delimiter=","
-            )  # assumes CSV with header "image,caption"
-            all_captions = [row for row in reader]
+    def __init__(self, split="train"):
+        all_captions = utils.get_captions()
 
         # Collect unique image filenames
         unique_images = list({row["image"] for row in all_captions})
