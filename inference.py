@@ -5,6 +5,7 @@ from PIL import Image
 import io
 import logging
 import models
+import time
 import utils
 
 # Suppress warnings
@@ -98,7 +99,6 @@ def main():
     )
 
     st.title("🖼️ Image Captioning Server")
-    st.markdown("Upload an image URL and get an AI-generated caption!")
 
     # Load model
     vit_encoder, model = load_models()
@@ -113,78 +113,36 @@ def main():
     if "caption" not in st.session_state:
         st.session_state.caption = ""
 
-    # Create two columns
-    col1, col2 = st.columns([1, 1])
+    if st.button("Random image 🚀"):
+        # Cache-buster so you don’t get the same photo twice
+        seed = int(time.time() * 1000)  # or random.randint(0, 1e9)
+        st.session_state.image_url = f"https://picsum.photos/seed/{seed}/640/480"
+        st.session_state.caption = ""
+        st.rerun()
 
-    with col1:
-        st.header("Input")
+    # Generation parameters
+    max_length = 50
 
-        # Image URL input
-        image_url = st.text_input(
-            "Enter Image URL:",
-            value=st.session_state.image_url,
-            placeholder="https://example.com/image.jpg",
-            help="Enter a direct URL to an image file",
-        )
-        # When the input changes, update the session state
-        if image_url != st.session_state.image_url:
-            st.session_state.image_url = image_url
-            st.session_state.caption = ""  # Clear old caption on new image
-            st.rerun()  # Rerun to update the right column immediately
+    if st.session_state.image_url:
+        # Load and display image
+        image = load_image_from_url(st.session_state.image_url)
 
-        # Example URLs
-        st.markdown("**Example URLs:**")
-        example_urls = [
-            "https://images.unsplash.com/photo-1506905925346-21bda4d32df4",
-            "https://images.unsplash.com/photo-1551963831-b3b1ca40c98e",
-            "https://images.unsplash.com/photo-1518717758536-85ae29035b6d",
-        ]
+        if image is not None:
+            with st.spinner("Generating caption..."):
+                caption = generate_caption(vit_encoder, model, image, max_length)
+                st.session_state.caption = caption
+                logging.info(f"Caption: {st.session_state.caption}")
 
-        for i, url in enumerate(example_urls):
-            if st.button(f"Example {i + 1}", key=f"example_{i}"):
-                st.session_state.image_url = url
-                st.session_state.caption = ""
-                st.rerun()
-
-        # Generation parameters
-        st.header("Parameters")
-        max_length = st.slider(
-            "Max Caption Length",
-            min_value=10,
-            max_value=100,
-            value=50,
-            help="Maximum number of tokens to generate",
-        )
-
-    with col2:
-        st.header("Output")
-
-        if st.session_state.image_url:
-            # Load and display image
-            image = load_image_from_url(st.session_state.image_url)
-
-            if image is not None:
-                st.image(image, caption="Input Image", use_container_width=True)
-
-                # Generate caption button
-                if st.button("Generate Caption", type="primary"):
-                    with st.spinner("Generating caption..."):
-                        caption = generate_caption(
-                            vit_encoder, model, image, max_length
-                        )
-                        st.session_state.caption = caption
-                        logging.info(f"Caption: {st.session_state.caption}")
-
-                    if st.session_state.caption:
-                        st.success("Caption generated!")
-                        st.write("**Generated Caption:**")
-                        st.write(f"*{st.session_state.caption}*")
-                        # Copy to clipboard button
-                        st.code(st.session_state.caption, language=None)
+            if st.session_state.caption:
+                st.image(image)
+                st.write(st.session_state.caption)
             else:
-                st.error("Failed to load image from URL")
+                st.badge("Caption could not be generated", color="red")
+
         else:
-            st.info("👆 Enter an image URL to get started")
+            st.error("Failed to load image from URL")
+    else:
+        st.info("👆 Enter an image URL to get started")
 
 
 if __name__ == "__main__":
