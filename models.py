@@ -303,9 +303,8 @@ class CombinedTransformer(nn.Module):
         tok_embed = self.embed_input_ids(input_ids)  # [B, T, D]
 
         # Decoder input = image prefix + *all* tokens generated so far.
-        decoder_input = torch.cat(
-            [image_features.unsqueeze(1), tok_embed], dim=1
-        )  # [B, 1+T, D]
+        images = image_features.unsqueeze(1).to(tok_embed.dtype)
+        decoder_input = torch.cat([images, tok_embed], dim=1)  # [B, 1+T, D]
 
         # Use the same input_ids to build the pad mask (no shifting here)
         full_logits = self.decode_image(decoder_input, input_ids)  # [B, T, vocab]
@@ -324,6 +323,7 @@ class CombinedTransformer(nn.Module):
         img_embed = self.image_projection(img_encoded).unsqueeze(1)  # [B, 1, D]
 
         # Prepend image embedding to caption embeddings
-        decoder_input = torch.cat([img_embed, tok_embed[:, :-1, :]], dim=1)  # [B, L, D]
+        decoder_input = torch.cat([img_embed.to(tok_embed.dtype), tok_embed[:, :-1, :]], dim=1)
+
         # Use input_ids without the last token so the mask length matches decoder_input (image + L‑1 text tokens)
         return self.decode_image(decoder_input, input_ids[:, :-1])

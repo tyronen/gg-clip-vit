@@ -188,19 +188,19 @@ def run_training(config=None, **_):
             batch = {
                 k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()
             }
-            optimizer.zero_grad()
             with maybe_autocast:
                 loss = loss_fn(batch, model, config["label_smoothing"])
                 loss = loss / config["accumulation_steps"]
 
+            scaler.scale(loss).backward()
             if (i + 1) % config["accumulation_steps"] == 0:
-                scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
                 total_norm = torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_norm=1.0
                 )
                 scaler.step(optimizer)
                 scaler.update()
+                optimizer.zero_grad()
                 total_train_loss += loss.item()
                 num_train_batches += 1
                 grad_norm = total_norm.item()
