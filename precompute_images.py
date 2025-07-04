@@ -3,7 +3,6 @@ from tqdm import tqdm
 import models
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoModel, AutoProcessor
 import utils
 
 from PIL import Image
@@ -30,8 +29,6 @@ def collate_fn(batch):
 
 
 def main():
-    device = utils.get_device()
-
     # Load ViT
     model = models.VitEncoder()
     model.eval()

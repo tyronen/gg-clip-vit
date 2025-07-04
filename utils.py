@@ -7,13 +7,18 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 import csv
 
-MODEL_FILE = "data/models.pth"
+BASE_MODEL_FILE = "data/base_model.pth"
+CUSTOM_MODEL_FILE = "data/custom_model.pth"
 DATA_FRACTION = 0.004
 
 TOKENIZER = AutoTokenizer.from_pretrained(
-    "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
+    "Qwen/Qwen3-0.6B-Base", trust_remote_code=True
 )
-TOKENIZER.bos_token = "<|im_start|>"
+TOKENIZER.add_special_tokens({"additional_special_tokens": ["<IMG>"]})
+TOKENIZER.pad_token = TOKENIZER.eos_token
+# Set BOS token to EOS token if it doesn't exist
+if TOKENIZER.bos_token is None:
+    TOKENIZER.bos_token = TOKENIZER.eos_token
 
 
 def setup_logging():
@@ -60,8 +65,7 @@ def collate_fn(batch):
     images, input_ids = zip(*batch)
     images = torch.stack(images)  # [B, 768]
     input_ids = torch.stack(input_ids)  # [B, L]
-    pad_mask = input_ids == TOKENIZER.pad_token_id
-    return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
+    return {"images": images, "input_ids": input_ids}
 
 
 class CustomDataLoader(DataLoader):

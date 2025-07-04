@@ -11,6 +11,14 @@ import subprocess
 
 from utils import CustomDataLoader
 
+parser = argparse.ArgumentParser(description="Train simple model")
+parser.add_argument("--entity", help="W and B entity", default="mlx-institute")
+parser.add_argument("--base", help="Whether to use base decoder", action="store_true")
+parser.add_argument("--sweep", help="Run a sweep", action="store_true")
+parser.add_argument("--check", help="Make sure it works", action="store_true")
+args = parser.parse_args()
+
+
 hyperparameters = {
     "batch_size": 192,
     "model_dim": 512,
@@ -18,10 +26,11 @@ hyperparameters = {
     "num_heads": 8,
     "num_decoders": 4,
     "learning_rate": 5e-4,
-    "epochs": 2,
+    "epochs": 50,
     "dropout": 0.1,
     "patience": 1,
     "label_smoothing": 0.1,
+    "use_custom_decoder": not args.base,
 }
 
 sweep_config = {
@@ -42,15 +51,9 @@ sweep_config = {
         "dropout": {"values": [0.0, 0.1, 0.2]},
         "patience": {"values": [3, 5, 10]},
         "label_smoothing": {"values": [0.0, 0.05, 0.1]},
+        "use_custom_decoder": {"values": [not args.base]},
     },
 }
-
-parser = argparse.ArgumentParser(description="Train simple model")
-parser.add_argument("--entity", help="W and B entity", default="mlx-institute")
-parser.add_argument("--project", help="W and B project", default="custom-decoder")
-parser.add_argument("--sweep", help="Run a sweep", action="store_true")
-parser.add_argument("--check", help="Make sure it works", action="store_true")
-args = parser.parse_args()
 
 
 def validate_model(model, validation_dataloader, epoch, device, config):
@@ -81,12 +84,12 @@ def validate_model(model, validation_dataloader, epoch, device, config):
 def loss_fn(batch, model, label_smoothing):
     input_ids = batch["input_ids"]
     labels = input_ids[:, 1:]  # [B, L-1]
-    logits = model(batch["images"], input_ids, batch["pad_mask"])
+    logits = model(batch["images"], input_ids)
 
     vocab_size = logits.size(-1)
     loss = F.cross_entropy(
-        logits.view(-1, vocab_size),
-        labels.contiguous().view(-1),
+        logits.reshape(-1, vocab_size),  # reshape works on non‑contiguous slices
+        labels.reshape(-1),  # same flatten for targets
         ignore_index=model.tokenizer.pad_token_id,
         label_smoothing=label_smoothing,
     )
@@ -111,9 +114,16 @@ def run_training(config=None, **_):
     utils.setup_logging()
     device = utils.get_device()
 
+    model_file = (
+        utils.CUSTOM_MODEL_FILE
+        if config["use_custom_decoder"]
+        else utils.BASE_MODEL_FILE
+    )
+
+    project = "custom-decoder" if config["use_custom_decoder"] else "base-decoder"
     run = wandb.init(
         entity=args.entity,
-        project=args.project,
+        project=project,
         # Track hyperparameters and run metadata.
         config=config,
     )
@@ -147,6 +157,7 @@ def run_training(config=None, **_):
         num_heads=config["num_heads"],
         num_decoders=config["num_decoders"],
         dropout=config["dropout"],
+        use_custom_decoder=config["use_custom_decoder"],
     ).to(device)
     wandb.watch(model, log="all", log_freq=100)
     wandb.define_metric("val_loss", summary="min")
@@ -216,7 +227,7 @@ def run_training(config=None, **_):
                     "num_decoders": config["num_decoders"],
                     "dropout": config["dropout"],
                 },
-                utils.MODEL_FILE,
+                model_file,
             )
         else:
             patience_counter += 1
@@ -225,15 +236,20 @@ def run_training(config=None, **_):
                 break
         if args.check:
             break
-    checkpoint = torch.load(utils.MODEL_FILE)
+    checkpoint = torch.load(model_file)
     model.load_state_dict(checkpoint["state_dict"])
     test_loss = validate_model(model, test_dataloader, last_epoch + 1, device, config)
     run.log(
         {"test_loss": test_loss},
     )
     if device.type == "cuda":
-        artifact = wandb.Artifact(name="basic-decoder-model", type="model")
-        artifact.add_file(utils.MODEL_FILE)
+        name = (
+            "basic-decoder-model"
+            if hyperparameters["use_custom_decoder"]
+            else "qwen-decoder-model"
+        )
+        artifact = wandb.Artifact(name=name, type="model")
+        artifact.add_file(model_file)
         run.log_artifact(artifact)
     run.finish(0)
 

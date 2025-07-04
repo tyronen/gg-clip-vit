@@ -2,9 +2,12 @@ import math
 
 import torch
 import torch.nn as nn
-import logging
 from torch.utils.data import Dataset
-from transformers import AutoModel, AutoProcessor, AutoTokenizer
+from transformers import (
+    AutoModel,
+    AutoProcessor,
+    AutoModelForCausalLM,
+)
 
 import utils
 
@@ -88,7 +91,7 @@ class SelfAttention(nn.Module):
     def rearrange(self, vector, B, L):
         return vector.reshape(B, L, self.num_heads, self.k_dim).transpose(1, 2)
 
-    def forward(self, x, pad_mask):
+    def forward(self, x, attn_mask):
         B, L, D = x.shape
         qkv = self.wqkv(x)
         q, k, v = qkv.split(self.model_dim, dim=-1)
@@ -99,7 +102,7 @@ class SelfAttention(nn.Module):
         mask_tensor = torch.triu(torch.ones(L, L, device=x.device), diagonal=1).bool()
         # Expand to 1×1×L×L so it can broadcast with per‑batch pad masks and per‑head scores
         mask_tensor = mask_tensor.unsqueeze(0).unsqueeze(0)
-        pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
+        pad_mask = (attn_mask == 0).unsqueeze(1).unsqueeze(2)
         mask_tensor = mask_tensor | pad_mask
 
         attended = attention(self.k_dim, qh, kh, vh, mask_tensor=mask_tensor)
@@ -131,11 +134,43 @@ class Decoder(nn.Module):
         self.norm2 = nn.LayerNorm(model_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, data, pad_mask):
-        stage1 = self.masked_self_mha(data, pad_mask)
+    def forward(self, data, attn_mask):
+        stage1 = self.masked_self_mha(data, attn_mask)
         addnormed_text = self.norm1(data + self.dropout(stage1))
         ffned = self.ffn(addnormed_text)
         return self.norm2(addnormed_text + self.dropout(ffned))
+
+
+class CustomDecoder(nn.Module):
+    def __init__(
+        self,
+        model_dim: int,
+        ffn_dim: int,
+        num_heads: int,
+        num_decoders: int,
+        dropout: float,
+        vocab_size: int,
+    ):
+        super().__init__()
+
+        def make_decoder() -> nn.Module:
+            return Decoder(
+                model_dim=model_dim,
+                ffn_dim=ffn_dim,
+                num_heads=num_heads,
+                dropout=dropout,
+            )
+
+        self.decoder_series = nn.ModuleList(
+            [make_decoder() for _ in range(num_decoders)]
+        )
+        self.linear = nn.Linear(model_dim, vocab_size)
+
+    def forward(self, input, attn_mask):
+        for decoder in self.decoder_series:
+            input = decoder(input, attn_mask)
+
+        return self.linear(input[:, 1:, :])  # [B, L-1, vocab]
 
 
 class VitEncoder(nn.Module):
@@ -158,6 +193,28 @@ class VitEncoder(nn.Module):
         return outputs
 
 
+def make_attn_mask(input_ids: torch.Tensor):
+    """
+    Build a 1/0 attention mask that is accepted by both Qwen3 and our custom decoder.
+
+    Args:
+        input_ids: [B, T] text token ids (no image prefix yet)
+        pad_id: tokenizer.pad_token_id (or eos if PAD is shared)
+        extra_prefix: how many prefix tokens (e.g. the projected image) are prepended
+
+    Returns:
+        mask: [B, extra_prefix + T] long tensor, 1 = keep, 0 = pad
+    """
+    txt_mask = (input_ids != utils.TOKENIZER.pad_token_id).long()  # 1/0 over text
+    prefix = torch.ones(
+        input_ids.size(0),
+        1,
+        dtype=txt_mask.dtype,
+        device=txt_mask.device,
+    )
+    return torch.cat([prefix, txt_mask], dim=1)
+
+
 class CombinedTransformer(nn.Module):
     def __init__(
         self,
@@ -166,75 +223,85 @@ class CombinedTransformer(nn.Module):
         num_heads: int,
         num_decoders: int,
         dropout: float,
+        use_custom_decoder: bool,
     ):
         super().__init__()
 
-        self.vit_encoder = VitEncoder()  # inference only
-
         self.tokenizer = utils.TOKENIZER
+        base = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen3-0.6B-Base", trust_remote_code=True
+        )
+        # Qwen‑3 stores its embeddings at base.model.embed_tokens
+        self.token_embedding = base.model.embed_tokens
+        self.token_embedding.requires_grad_(False)
+        self.use_custom_decoder = use_custom_decoder
 
-        actual_vocab_size = max(self.tokenizer.get_vocab().values()) + 1
-        self.token_embedding = nn.Embedding(actual_vocab_size, model_dim)
-
-        self.image_projection = nn.Linear(768, model_dim)
-        self.linear = nn.Linear(model_dim, actual_vocab_size)
-
-        def make_decoder() -> nn.Module:
-            return Decoder(
+        img_proj_out = model_dim
+        if use_custom_decoder:
+            self.decoder = CustomDecoder(
                 model_dim=model_dim,
                 ffn_dim=ffn_dim,
                 num_heads=num_heads,
+                num_decoders=num_decoders,
                 dropout=dropout,
+                vocab_size=self.token_embedding.num_embeddings,
             )
+            self.token_proj = nn.Linear(self.token_embedding.embedding_dim, model_dim)
+        else:
+            self.decoder = base
+            self.token_proj = nn.Identity()
+            img_proj_out = self.decoder.config.hidden_size
+        self.image_projection = nn.Linear(768, img_proj_out)
 
-        self.decoder_series = nn.ModuleList(
-            [make_decoder() for _ in range(num_decoders)]
-        )
-
-    # for one step
-    def decode_step(self, image_features, input_ids, pad_mask):
+    def embed_input_ids(self, input_ids):
         # Create embeddings for the tokens generated so far
         tok_embed = self.token_embedding(input_ids)
+        return self.token_proj(tok_embed)
 
-        # Combine image and text embeddings
-        decoder_input = torch.cat(
-            [image_features.unsqueeze(1), tok_embed],
-            dim=1,
+    def decode_image(self, decoder_input, input_ids):
+        attn_mask = make_attn_mask(input_ids)
+        if self.use_custom_decoder:
+            return self.decoder(decoder_input, attn_mask)
+
+        out = self.decoder(
+            inputs_embeds=decoder_input,
+            attention_mask=attn_mask,
         )
+        return out.logits[:, 1:, :]  # [B, L‑1, vocab]
 
-        # Pass through all decoder layers
-        for decoder in self.decoder_series:
-            decoder_input = decoder(decoder_input, pad_mask)
+    # one autoregressive step
+    def decode_step(self, image_features, input_ids):
+        """
+        Args:
+            image_features: [B, D] projected image vector (same D as decoder hidden)
+            input_ids:     [B, T] tokens generated **so far** (includes BOS, excludes EOS)
+        Returns:
+            logits for the **next** token: [B, vocab]
+        """
+        tok_embed = self.embed_input_ids(input_ids)  # [B, T, D]
 
-        # Get logits for only the very last token in the sequence
-        logits = self.linear(decoder_input[:, -1, :])
-        return logits
+        # Decoder input = image prefix + *all* tokens generated so far.
+        decoder_input = torch.cat(
+            [image_features.unsqueeze(1), tok_embed], dim=1
+        )  # [B, 1+T, D]
 
-    def forward(self, images, input_ids, pad_mask):
+        # Use the same input_ids to build the pad mask (no shifting here)
+        full_logits = self.decode_image(decoder_input, input_ids)  # [B, T, vocab]
+
+        # Return logits for the last position (= next token)
+        return full_logits[:, -1, :]  # [B, vocab]
+
+    def forward(self, images, input_ids):
         device = next(self.parameters()).device
         input_ids = input_ids.to(device)  # [B, L]
-        tok_embed = self.token_embedding(input_ids)  # [B, L, D]
+        img_encoded = images.to(device)
+
+        tok_embed = self.embed_input_ids(input_ids)
 
         # Encode image
-        img_encoded = images.to(device)
         img_embed = self.image_projection(img_encoded).unsqueeze(1)  # [B, 1, D]
 
         # Prepend image embedding to caption embeddings
         decoder_input = torch.cat([img_embed, tok_embed[:, :-1, :]], dim=1)  # [B, L, D]
-        pad_mask = torch.cat(
-            [
-                torch.zeros_like(pad_mask[:, :1]),  # image vector is never pad
-                pad_mask[:, :-1],
-            ],  # align rest of caption
-            dim=1,
-        )
-        for decoder in self.decoder_series:
-            decoder_input = decoder(decoder_input, pad_mask)
-
-        return self.linear(decoder_input[:, 1:, :])  # [B, L-1, vocab]
-
-
-# for inference
-def encode_image(image, vit_encoder, transformer):
-    image_features = vit_encoder([image])
-    return transformer.image_projection(image_features)  # [B, model_dim]
+        # Use input_ids without the last token so the mask length matches decoder_input (image + L‑1 text tokens)
+        return self.decode_image(decoder_input, input_ids[:, :-1])
