@@ -171,7 +171,7 @@ class CustomDecoder(nn.Module):
         for decoder in self.decoder_series:
             input = decoder(input, attn_mask)
 
-        return self.linear(input[:, 1:, :])  # [B, L-1, vocab]
+        return self.linear(input)  # [B, L-1, vocab]
 
 
 class VitEncoder(nn.Module):
@@ -289,9 +289,9 @@ class CombinedTransformer(nn.Module):
             inputs_embeds=decoder_input,
             attention_mask=attn_mask,
         )
-        return out.logits[:, 1:, :]  # [B, L‑1, vocab]
+        return out.logits
 
-    # one autoregressive step
+    # one autoregressive step for inference 
     def decode_step(self, image_features, input_ids):
         """
         Args:

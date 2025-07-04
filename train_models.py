@@ -79,19 +79,25 @@ def validate_model(model, validation_dataloader, epoch, device, config):
             num_batches += 1
 
     model.train()  # Set back to training mode
-
+    logging.info(f"validation: total loss {total_loss} batches {num_batches}")
     return total_loss / num_batches
 
 
 def loss_fn(batch, model, label_smoothing):
     input_ids = batch["input_ids"]
-    labels = input_ids[:, 1:]  # [B, L-1]
     logits = model(batch["images"], input_ids)
 
-    vocab_size = logits.size(-1)
+    # Standard causal LM alignment:
+    # Shift logits to the left and labels to the right.
+    # Prediction for token i+1 is at logits[:, i, :]
+    # The ground truth for token i+1 is at input_ids[:, i+1]
+    shift_logits = logits[:, :-1, :].contiguous()
+    shift_labels = input_ids[:, 1:].contiguous()
+
+    vocab_size = shift_logits.size(-1)
     loss = F.cross_entropy(
-        logits.reshape(-1, vocab_size),  # reshape works on non‑contiguous slices
-        labels.reshape(-1),  # same flatten for targets
+        shift_logits.view(-1, vocab_size),
+        shift_labels.view(-1), 
         ignore_index=model.tokenizer.pad_token_id,
         label_smoothing=label_smoothing,
     )
@@ -222,13 +228,13 @@ def run_training(config=None, **_):
             },
         )
         last_epoch += 1
+        logging.info(f"train {avg_train_loss} avg {avg_val_loss} best {best_val_loss}")
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             patience_counter = 0
             torch.save(
                 {
                     "state_dict": model.state_dict(),
-                    "parameters": params,
                     "model_dim": config["model_dim"],
                     "ffn_dim": config["ffn_dim"],
                     "num_heads": config["num_heads"],
@@ -237,6 +243,7 @@ def run_training(config=None, **_):
                 },
                 model_file,
             )
+            logging.info("Saved in epoch {last_epoch}")
         else:
             patience_counter += 1
             if patience_counter >= config["patience"]:
