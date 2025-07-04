@@ -167,7 +167,7 @@ def run_training(config=None, **_):
             "lr": config["learning_rate"],
         },
     ]
-    optimizer = optim.Adam(params)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=total_steps, eta_min=1e-6
     )
@@ -242,7 +242,7 @@ def run_training(config=None, **_):
     run.log(
         {"test_loss": test_loss},
     )
-    if device.type == "cuda":
+    if not args.check:
         name = (
             "basic-decoder-model"
             if hyperparameters["use_custom_decoder"]
@@ -251,7 +251,7 @@ def run_training(config=None, **_):
         artifact = wandb.Artifact(name=name, type="model")
         artifact.add_file(model_file)
         run.log_artifact(artifact)
-    run.finish(0)
+    run.finish(0, timeout=0)
 
 
 if __name__ == "__main__":

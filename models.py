@@ -7,8 +7,9 @@ from transformers import (
     AutoModel,
     AutoProcessor,
     AutoModelForCausalLM,
+    BitsAndBytesConfig,
 )
-
+from peft import LoraConfig, get_peft_model
 import utils
 
 CLIP = "openai/clip-vit-base-patch32"
@@ -215,6 +216,14 @@ def make_attn_mask(input_ids: torch.Tensor):
     return torch.cat([prefix, txt_mask], dim=1)
 
 
+base = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen3-0.6B-Base",
+    trust_remote_code=True,
+    quantization_config=bnb_config,
+    device_map="auto",
+)
+
+
 class CombinedTransformer(nn.Module):
     def __init__(
         self,
@@ -228,13 +237,22 @@ class CombinedTransformer(nn.Module):
         super().__init__()
 
         self.tokenizer = utils.TOKENIZER
+        bnb_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_threshold=6.0,           # typical defaults
+            llm_int8_has_fp16_weight=False,
+        )
         base = AutoModelForCausalLM.from_pretrained(
-            "Qwen/Qwen3-0.6B-Base", trust_remote_code=True
+            "Qwen/Qwen3-0.6B-Base", trust_remote_code=True,     
+            quantization_config=bnb_config,
+            device_map="auto",
         )
         # Qwen‑3 stores its embeddings at base.model.embed_tokens
         self.token_embedding = base.model.embed_tokens
         self.token_embedding.requires_grad_(False)
         self.use_custom_decoder = use_custom_decoder
+        for param in base.parameters():
+            param.requires_grad = False
 
         img_proj_out = model_dim
         if use_custom_decoder:
@@ -248,7 +266,16 @@ class CombinedTransformer(nn.Module):
             )
             self.token_proj = nn.Linear(self.token_embedding.embedding_dim, model_dim)
         else:
-            self.decoder = base
+            config = LoraConfig(
+               task_type="CAUSAL_LM",
+                r=8,                # LoRA rank
+                lora_alpha=16,
+                lora_dropout=0.05,
+            )
+            self.decoder = get_peft_model(base, config)
+            for name, p in self.decoder.named_parameters():
+                if "lora_" in name:
+                    p.requires_grad = True
             self.token_proj = nn.Identity()
             img_proj_out = self.decoder.config.hidden_size
         self.image_projection = nn.Linear(768, img_proj_out)

@@ -49,6 +49,10 @@ def main():
             features[fname] = vec
 
     # Save
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(models.IMAGES_PATH)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
     if os.path.exists(models.IMAGES_PATH):
         os.remove(models.IMAGES_PATH)
     torch.save(features, models.IMAGES_PATH)
