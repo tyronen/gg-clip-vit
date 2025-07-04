@@ -216,14 +216,6 @@ def make_attn_mask(input_ids: torch.Tensor):
     return torch.cat([prefix, txt_mask], dim=1)
 
 
-base = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen3-0.6B-Base",
-    trust_remote_code=True,
-    quantization_config=bnb_config,
-    device_map="auto",
-)
-
-
 class CombinedTransformer(nn.Module):
     def __init__(
         self,
@@ -247,6 +239,9 @@ class CombinedTransformer(nn.Module):
             quantization_config=bnb_config,
             device_map="auto",
         )
+        base.gradient_checkpointing_enable()
+        base.config.use_cache = False
+
         # Qwen‑3 stores its embeddings at base.model.embed_tokens
         self.token_embedding = base.model.embed_tokens
         self.token_embedding.requires_grad_(False)

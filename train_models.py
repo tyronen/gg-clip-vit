@@ -8,7 +8,7 @@ from tqdm import tqdm
 import utils
 import models
 import subprocess
-
+import bitsandbytes.optim as bnb_optim
 from utils import CustomDataLoader
 
 parser = argparse.ArgumentParser(description="Train simple model")
@@ -20,7 +20,8 @@ args = parser.parse_args()
 
 
 hyperparameters = {
-    "batch_size": 192,
+    "accumulation_steps": 128,
+    "batch_size": 32,
     "model_dim": 512,
     "ffn_dim": 1536,
     "num_heads": 8,
@@ -37,7 +38,8 @@ sweep_config = {
     "method": "random",  # can be 'grid', 'random', or 'bayes'
     "metric": {"name": "val_loss", "goal": "minimize"},
     "parameters": {
-        "batch_size": {"values": [192]},
+        "accumulation_steps": {"values": [128, 192]},
+        "batch_size": {"values": [16, 32]},
         "model_dim": {"values": [384, 512]},
         "ffn_dim": {"values": [1536, 2048]},
         "num_heads": {"values": [8]},
@@ -70,7 +72,7 @@ def validate_model(model, validation_dataloader, epoch, device, config):
             }
 
             # Forward pass (shared with training)
-            loss, logits, labels = loss_fn(batch, model, config["label_smoothing"])
+            loss = loss_fn(batch, model, config["label_smoothing"])
 
             # loss already computed by loss_fn
             total_loss += loss.item()
@@ -93,7 +95,7 @@ def loss_fn(batch, model, label_smoothing):
         ignore_index=model.tokenizer.pad_token_id,
         label_smoothing=label_smoothing,
     )
-    return loss, logits, labels
+    return loss
 
 
 def get_git_commit():
@@ -167,7 +169,10 @@ def run_training(config=None, **_):
             "lr": config["learning_rate"],
         },
     ]
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
+    optimizer = bnb_optim.Adam8bit(
+    filter(lambda p: p.requires_grad, model.parameters()), 
+    lr=config["learning_rate"]
+)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=total_steps, eta_min=1e-6
     )
@@ -185,21 +190,24 @@ def run_training(config=None, **_):
             }
             optimizer.zero_grad()
             with maybe_autocast:
-                loss, logits, labels = loss_fn(batch, model, config["label_smoothing"])
+                loss = loss_fn(batch, model, config["label_smoothing"])
+                loss = loss / config["accumulation_steps"]
 
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            total_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), max_norm=1.0
-            )
-            scaler.step(optimizer)
-            scaler.update()
-            total_train_loss += loss.item()
-            num_train_batches += 1
-            grad_norm = total_norm.item()
+            if (i + 1) % config["accumulation_steps"] == 0:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                total_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=1.0
+                )
+                scaler.step(optimizer)
+                scaler.update()
+                total_train_loss += loss.item()
+                num_train_batches += 1
+                grad_norm = total_norm.item()
+                del loss, batch
 
         logging.info(f"Epoch {epoch + 1}/{config['epochs']}")
-        avg_train_loss = total_train_loss / num_train_batches
+        avg_train_loss = total_train_loss / num_train_batches if num_train_batches > 0 else total_train_loss
         avg_val_loss = validate_model(
             model, validation_dataloader, epoch, device, config
         )
