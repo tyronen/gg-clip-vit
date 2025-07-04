@@ -1,6 +1,4 @@
 import os
-import csv
-import kagglehub
 from tqdm import tqdm
 import models
 import torch
@@ -34,17 +32,11 @@ def collate_fn(batch):
 def main():
     device = utils.get_device()
 
-    imagepath = kagglehub.dataset_download("adityajn105/flickr30k")
-
     # Load ViT
-    processor = AutoProcessor.from_pretrained(models.VIT)
-    model = AutoModel.from_pretrained(models.VIT, use_safetensors=True).to(device)
+    model = models.VitEncoder()
     model.eval()
 
-    # Read list of unique image filenames
-    with open(f"{imagepath}/captions.txt", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        image_filenames = sorted({row["image"] for row in reader})
+    imagepath, image_filenames, _ = utils.get_captions()
 
     # Dataset and DataLoader
     dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images")
@@ -55,9 +47,7 @@ def main():
     features = {}
 
     for filenames, images in tqdm(dataloader):
-        inputs = processor(images=images, return_tensors="pt").to(device)
-        with torch.no_grad():
-            outputs = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
+        outputs = model(images).cpu().numpy()
         for fname, vec in zip(filenames, outputs):
             features[fname] = vec
 

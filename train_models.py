@@ -6,9 +6,10 @@ import argparse
 import wandb
 from tqdm import tqdm
 import utils
-from torch.utils.data import DataLoader
 import models
 import subprocess
+
+from utils import CustomDataLoader
 
 hyperparameters = {
     "batch_size": 192,
@@ -17,10 +18,9 @@ hyperparameters = {
     "num_heads": 8,
     "num_decoders": 4,
     "learning_rate": 5e-4,
-    "epochs": 50,
+    "epochs": 2,
     "dropout": 0.1,
-    "patience": 3,
-    "data_fraction": 0.1,
+    "patience": 1,
     "label_smoothing": 0.1,
 }
 
@@ -41,7 +41,6 @@ sweep_config = {
         "epochs": {"values": [20]},
         "dropout": {"values": [0.0, 0.1, 0.2]},
         "patience": {"values": [3, 5, 10]},
-        "data_fraction": {"values": [0.1]},
         "label_smoothing": {"values": [0.0, 0.05, 0.1]},
     },
 }
@@ -52,29 +51,6 @@ parser.add_argument("--project", help="W and B project", default="custom-decoder
 parser.add_argument("--sweep", help="Run a sweep", action="store_true")
 parser.add_argument("--check", help="Make sure it works", action="store_true")
 args = parser.parse_args()
-
-
-def collate_fn(batch):
-    images, input_ids = zip(*batch)
-    images = torch.stack(images)  # [B, 768]
-    input_ids = torch.stack(input_ids)  # [B, L]
-    pad_mask = input_ids == models.TOKENIZER.pad_token_id
-    return {"images": images, "input_ids": input_ids, "pad_mask": pad_mask}
-
-
-class CustomDataLoader(DataLoader):
-    def __init__(self, dataset, device, batch_size, train=False):
-        num_workers = 8 if device.type == "cuda" else 0 if device.type == "mps" else 4
-        super().__init__(
-            dataset,
-            batch_size=batch_size,
-            shuffle=train,
-            drop_last=train,
-            pin_memory=(device.type == "cuda"),
-            num_workers=num_workers,
-            persistent_workers=(num_workers > 0),
-            collate_fn=collate_fn,
-        )
 
 
 def validate_model(model, validation_dataloader, epoch, device, config):
@@ -145,15 +121,9 @@ def run_training(config=None, **_):
     if config is None:
         config = dict(wandb.config)
 
-    train_dataset = models.Flickr30kDataset(
-        split="train", data_fraction=config["data_fraction"]
-    )
-    validation_dataset = models.Flickr30kDataset(
-        split="val", data_fraction=config["data_fraction"]
-    )
-    test_dataset = models.Flickr30kDataset(
-        split="test", data_fraction=config["data_fraction"]
-    )
+    train_dataset = models.Flickr30kDataset(split="train")
+    validation_dataset = models.Flickr30kDataset(split="val")
+    test_dataset = models.Flickr30kDataset(split="test")
     logging.info(
         f"Dataset sizes: training {len(train_dataset)} validation: {len(validation_dataset)} test: {len(test_dataset)}"
     )
@@ -261,9 +231,10 @@ def run_training(config=None, **_):
     run.log(
         {"test_loss": test_loss},
     )
-    artifact = wandb.Artifact(name="basic-decoder-model", type="model")
-    artifact.add_file(utils.MODEL_FILE)
-    run.log_artifact(artifact)
+    if device.type == "cuda":
+        artifact = wandb.Artifact(name="basic-decoder-model", type="model")
+        artifact.add_file(utils.MODEL_FILE)
+        run.log_artifact(artifact)
     run.finish(0)
 
 
