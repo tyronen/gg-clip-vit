@@ -2,7 +2,6 @@ black
 datasets
 kagglehub
 hf-transfer
-jpeg4py
 regex
 tqdm
 transformers
