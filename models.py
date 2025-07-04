@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
-import os
+import logging
 from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
@@ -17,16 +17,13 @@ import numpy as np
 
 class Flickr30kDataset(Dataset):
     def __init__(self, split="train"):
-        all_captions = utils.get_captions()
-
-        # Collect unique image filenames
-        unique_images = list({row["image"] for row in all_captions})
+        _, unique_images, rows = utils.get_captions()
 
         # Split the images (not the individual caption rows) into train/val/test
         np.random.seed(42)  # reproducible splits
         np.random.shuffle(unique_images)
 
-        n_images = data_fraction * len(unique_images)
+        n_images = len(unique_images)
         train_end = int(0.8 * n_images)
         val_end = int(0.9 * n_images)
         test_end = int(1.0 * n_images)
@@ -39,10 +36,10 @@ class Flickr30kDataset(Dataset):
             split_images = set(unique_images[val_end:test_end])
 
         # Keep only caption rows whose image belongs to the chosen split
-        self.captions = [row for row in all_captions if row["image"] in split_images]
+        self.captions = [row for row in rows if row["image"] in split_images]
 
         self.tokenizer = utils.TOKENIZER
-        self.image_features = torch.load(IMAGES_PATH)
+        self.image_features = torch.load(IMAGES_PATH, weights_only=False)
 
     def __len__(self):
         return len(self.captions)
@@ -144,19 +141,20 @@ class Decoder(nn.Module):
 class VitEncoder(nn.Module):
     def __init__(self):
         super().__init__()
+        self.device = utils.get_device()
         self.vit_processor = AutoProcessor.from_pretrained(VIT, use_fast=False)
-        self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True)
+        self.vit_model = AutoModel.from_pretrained(VIT, use_safetensors=True).to(
+            self.device
+        )
 
         # Freeze the pre-trained weights
         for param in self.vit_model.parameters():
             param.requires_grad = False
 
     def forward(self, images):
-        inputs = self.vit_processor(images=images, return_tensors="pt")
+        inputs = self.vit_processor(images=images, return_tensors="pt").to(self.device)
         with torch.no_grad():
-            outputs = (
-                self.vit_model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()
-            )
+            outputs = self.vit_model(**inputs).last_hidden_state.mean(dim=1)
         return outputs
 
 
@@ -193,10 +191,24 @@ class CombinedTransformer(nn.Module):
             [make_decoder() for _ in range(num_decoders)]
         )
 
-    # for inference
-    def encode_image(self, image):
-        image_features = self.vit_encoder([image])
-        return self.image_projection(image_features)  # [B, model_dim]
+    # for one step
+    def decode_step(self, image_features, input_ids, pad_mask):
+        # Create embeddings for the tokens generated so far
+        tok_embed = self.token_embedding(input_ids)
+
+        # Combine image and text embeddings
+        decoder_input = torch.cat(
+            [image_features.unsqueeze(1), tok_embed],
+            dim=1,
+        )
+
+        # Pass through all decoder layers
+        for decoder in self.decoder_series:
+            decoder_input = decoder(decoder_input, pad_mask)
+
+        # Get logits for only the very last token in the sequence
+        logits = self.linear(decoder_input[:, -1, :])
+        return logits
 
     def forward(self, images, input_ids, pad_mask):
         device = next(self.parameters()).device
@@ -220,3 +232,9 @@ class CombinedTransformer(nn.Module):
             decoder_input = decoder(decoder_input, pad_mask)
 
         return self.linear(decoder_input[:, 1:, :])  # [B, L-1, vocab]
+
+
+# for inference
+def encode_image(image, vit_encoder, transformer):
+    image_features = vit_encoder([image])
+    return transformer.image_projection(image_features)  # [B, model_dim]

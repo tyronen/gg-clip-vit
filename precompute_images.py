@@ -36,7 +36,7 @@ def main():
     model = models.VitEncoder()
     model.eval()
 
-    image_filenames = utils.get_captions()
+    imagepath, image_filenames, _ = utils.get_captions()
 
     # Dataset and DataLoader
     dataset = ViTFeatureDataset(image_filenames, f"{imagepath}/Images")
@@ -47,7 +47,7 @@ def main():
     features = {}
 
     for filenames, images in tqdm(dataloader):
-        outputs = model(images)
+        outputs = model(images).cpu().numpy()
         for fname, vec in zip(filenames, outputs):
             features[fname] = vec
 

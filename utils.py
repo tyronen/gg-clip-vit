@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 import csv
 
 MODEL_FILE = "data/models.pth"
-DATA_FRACTION = 0.01
+DATA_FRACTION = 0.004
 
 TOKENIZER = AutoTokenizer.from_pretrained(
     "Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True
@@ -42,15 +42,19 @@ def amp_components(device, train=False):
 def get_captions():
     imagepath = kagglehub.dataset_download("adityajn105/flickr30k")
 
-    # Read list of unique image filenames
+    # Load all caption rows as full dictionaries (keep every field)
     with open(f"{imagepath}/captions.txt", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        image_filenames = sorted({row["image"] for row in reader})
+        rows = list(csv.DictReader(f))
+        rows.sort(key=lambda r: r["image"])  # deterministic ordering by image filename
 
     if DATA_FRACTION < 1:
-        num_images = int(DATA_FRACTION * len(image_filenames))
-        image_filenames = image_filenames[:num_images]
-    return image_filenames
+        num_rows = max(1, int(DATA_FRACTION * len(rows)))
+        rows = rows[:num_rows]
+
+    filenames = list({row["image"] for row in rows})
+
+    return imagepath, filenames, rows
+
 
 def collate_fn(batch):
     images, input_ids = zip(*batch)

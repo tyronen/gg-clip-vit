@@ -3,7 +3,6 @@ import torch
 import requests
 from PIL import Image
 import io
-from transformers import AutoModel, AutoProcessor, AutoTokenizer
 import logging
 import models
 import utils
@@ -17,9 +16,9 @@ DEVICE = utils.get_device()
 
 
 @st.cache_resource
-def load_model():
+def load_models():
     """Load the trained model"""
-
+    vit_encoder = models.VitEncoder()
     checkpoint = torch.load(utils.MODEL_FILE, map_location=DEVICE)
     model = models.CombinedTransformer(
         model_dim=checkpoint["model_dim"],
@@ -32,9 +31,10 @@ def load_model():
     model.to(DEVICE)
     model.eval()
     st.success("Model loaded successfully!")
-    return model
+    return vit_encoder, model
 
 
+@st.cache_data
 def load_image_from_url(url):
     """Load image from URL"""
     try:
@@ -47,7 +47,7 @@ def load_image_from_url(url):
         return None
 
 
-def generate_caption(model, image, max_length=50):
+def generate_caption(vit_encoder, model, image, max_length=50):
     """Generate caption for the image"""
     if model is None:
         return "Model not loaded"
@@ -55,7 +55,9 @@ def generate_caption(model, image, max_length=50):
     try:
         with torch.no_grad():
             # Encode image
-            image_features = model.encode_image(image)  # [1, model_dim]
+            image_features = models.encode_image(
+                image, vit_encoder, model
+            )  # [1, model_dim]
 
             # Initialize with BOS token
             generated = [model.tokenizer.bos_token_id]
@@ -65,27 +67,12 @@ def generate_caption(model, image, max_length=50):
                 # Convert to tensor
                 input_ids = torch.tensor([generated], device=DEVICE)
 
-                # Create embeddings
-                tok_embed = model.token_embedding(input_ids)  # [1, len, model_dim]
+                # Create the necessary all-False pad mask
+                seq_len = input_ids.shape[1] + 1
+                pad_mask = torch.zeros(1, seq_len, device=DEVICE, dtype=torch.bool)
 
-                # Combine image and text embeddings
-                if len(generated) == 1:  # First token
-                    decoder_input = torch.cat(
-                        [image_features.unsqueeze(1), tok_embed],  # [1, 1, model_dim]
-                        dim=1,
-                    )
-                else:
-                    decoder_input = torch.cat(
-                        [image_features.unsqueeze(1), tok_embed],  # [1, 1, model_dim]
-                        dim=1,
-                    )
-
-                # Pass through decoder layers
-                for decoder in model.decoder_layers:
-                    decoder_input = decoder(decoder_input, decoder_input)
-
-                # Get logits for next token
-                logits = model.linear(decoder_input[:, -1, :])  # [1, vocab_size]
+                # Use the new decode_step method to get the next token's logits
+                logits = model.decode_step(image_features, input_ids, pad_mask)
 
                 # Get next token (greedy decoding)
                 next_token = torch.argmax(logits, dim=-1).item()
@@ -114,11 +101,17 @@ def main():
     st.markdown("Upload an image URL and get an AI-generated caption!")
 
     # Load model
-    model = load_model()
+    vit_encoder, model = load_models()
 
     if model is None:
         st.error("Please check your model path and try again.")
         return
+
+    # Initialize session state variables if they don't exist
+    if "image_url" not in st.session_state:
+        st.session_state.image_url = ""
+    if "caption" not in st.session_state:
+        st.session_state.caption = ""
 
     # Create two columns
     col1, col2 = st.columns([1, 1])
@@ -129,9 +122,15 @@ def main():
         # Image URL input
         image_url = st.text_input(
             "Enter Image URL:",
+            value=st.session_state.image_url,
             placeholder="https://example.com/image.jpg",
             help="Enter a direct URL to an image file",
         )
+        # When the input changes, update the session state
+        if image_url != st.session_state.image_url:
+            st.session_state.image_url = image_url
+            st.session_state.caption = ""  # Clear old caption on new image
+            st.rerun()  # Rerun to update the right column immediately
 
         # Example URLs
         st.markdown("**Example URLs:**")
@@ -144,7 +143,8 @@ def main():
         for i, url in enumerate(example_urls):
             if st.button(f"Example {i + 1}", key=f"example_{i}"):
                 st.session_state.image_url = url
-                image_url = url
+                st.session_state.caption = ""
+                st.rerun()
 
         # Generation parameters
         st.header("Parameters")
@@ -159,24 +159,28 @@ def main():
     with col2:
         st.header("Output")
 
-        if image_url:
+        if st.session_state.image_url:
             # Load and display image
-            image = load_image_from_url(image_url)
+            image = load_image_from_url(st.session_state.image_url)
 
             if image is not None:
-                st.image(image, caption="Input Image", use_column_width=True)
+                st.image(image, caption="Input Image", use_container_width=True)
 
                 # Generate caption button
                 if st.button("Generate Caption", type="primary"):
                     with st.spinner("Generating caption..."):
-                        caption = generate_caption(model, image, max_length)
+                        caption = generate_caption(
+                            vit_encoder, model, image, max_length
+                        )
+                        st.session_state.caption = caption
+                        logging.info(f"Caption: {st.session_state.caption}")
 
-                    st.success("Caption generated!")
-                    st.write("**Generated Caption:**")
-                    st.write(f"*{caption}*")
-
-                    # Copy to clipboard button
-                    st.code(caption, language=None)
+                    if st.session_state.caption:
+                        st.success("Caption generated!")
+                        st.write("**Generated Caption:**")
+                        st.write(f"*{st.session_state.caption}*")
+                        # Copy to clipboard button
+                        st.code(st.session_state.caption, language=None)
             else:
                 st.error("Failed to load image from URL")
         else:

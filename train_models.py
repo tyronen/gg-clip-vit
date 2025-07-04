@@ -18,10 +18,9 @@ hyperparameters = {
     "num_heads": 8,
     "num_decoders": 4,
     "learning_rate": 5e-4,
-    "epochs": 50,
+    "epochs": 2,
     "dropout": 0.1,
-    "patience": 3,
-    "data_fraction": utils.DATA_FRACTION,
+    "patience": 1,
     "label_smoothing": 0.1,
 }
 
@@ -42,7 +41,6 @@ sweep_config = {
         "epochs": {"values": [20]},
         "dropout": {"values": [0.0, 0.1, 0.2]},
         "patience": {"values": [3, 5, 10]},
-        "data_fraction": {"values": [0.1]},
         "label_smoothing": {"values": [0.0, 0.05, 0.1]},
     },
 }
@@ -53,8 +51,6 @@ parser.add_argument("--project", help="W and B project", default="custom-decoder
 parser.add_argument("--sweep", help="Run a sweep", action="store_true")
 parser.add_argument("--check", help="Make sure it works", action="store_true")
 args = parser.parse_args()
-
-
 
 
 def validate_model(model, validation_dataloader, epoch, device, config):
@@ -235,9 +231,10 @@ def run_training(config=None, **_):
     run.log(
         {"test_loss": test_loss},
     )
-    artifact = wandb.Artifact(name="basic-decoder-model", type="model")
-    artifact.add_file(utils.MODEL_FILE)
-    run.log_artifact(artifact)
+    if device.type == "cuda":
+        artifact = wandb.Artifact(name="basic-decoder-model", type="model")
+        artifact.add_file(utils.MODEL_FILE)
+        run.log_artifact(artifact)
     run.finish(0)
 
 
